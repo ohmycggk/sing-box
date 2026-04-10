@@ -68,6 +68,7 @@ func InboundRegistry() *inbound.Registry {
 	nowhere.RegisterInbound(registry)
 
 	registerQUICInbounds(registry)
+	registerCloudflaredInbound(registry)
 	registerStubForRemovedInbounds(registry)
 
 	return registry
