@@ -139,6 +139,7 @@ func ServiceRegistry() *service.Registry {
 	resolved.RegisterService(registry)
 	ssmapi.RegisterService(registry)
 
+	registerQUICServices(registry)
 	registerDERPService(registry)
 	registerCCMService(registry)
 	registerOCMService(registry)
