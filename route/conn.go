@@ -279,7 +279,7 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	if !direction {
 		if err == nil {
 			m.logger.DebugContext(ctx, "connection upload finished")
-		} else if !E.IsClosedOrCanceled(err) {
+		} else if !isBenignConnClose(err) {
 			m.logger.ErrorContext(ctx, "connection upload closed: ", err)
 		} else {
 			m.logger.TraceContext(ctx, "connection upload closed")
@@ -287,7 +287,7 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	} else {
 		if err == nil {
 			m.logger.DebugContext(ctx, "connection download finished")
-		} else if !E.IsClosedOrCanceled(err) {
+		} else if !isBenignConnClose(err) {
 			m.logger.ErrorContext(ctx, "connection download closed: ", err)
 		} else {
 			m.logger.TraceContext(ctx, "connection download closed")
@@ -428,4 +428,16 @@ func (c *trackedPacketConn) ReaderReplaceable() bool {
 
 func (c *trackedPacketConn) WriterReplaceable() bool {
 	return true
+}
+
+// isBenignConnClose treats peer EOF/reset and local stream cancel as normal close.
+func isBenignConnClose(err error) bool {
+	if err == nil || E.IsClosedOrCanceled(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "canceled by local") ||
+		strings.Contains(msg, "cancelled by local") ||
+		strings.Contains(msg, "stream canceled") ||
+		strings.Contains(msg, "stream cancelled")
 }
