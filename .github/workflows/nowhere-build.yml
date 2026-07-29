@@ -1,0 +1,187 @@
+name: Nowhere Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version name (default: dev-<short sha>)"
+        required: false
+        type: string
+      tag:
+        description: "Prerelease tag name"
+        required: false
+        type: string
+        default: "nowhere-dev"
+  push:
+    branches:
+      - build/nowhere
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "linux-amd64-v1", goos: linux, goarch: amd64, goamd64: v1 }
+          - { name: "linux-amd64-v2", goos: linux, goarch: amd64, goamd64: v2 }
+          - { name: "linux-amd64-v3", goos: linux, goarch: amd64, goamd64: v3 }
+          - { name: "linux-arm64", goos: linux, goarch: arm64 }
+          - { name: "linux-386", goos: linux, goarch: "386", go386: sse2 }
+          - { name: "linux-armv5", goos: linux, goarch: arm, goarm: "5" }
+          - { name: "linux-armv6", goos: linux, goarch: arm, goarm: "6" }
+          - { name: "linux-armv7", goos: linux, goarch: arm, goarm: "7" }
+          - { name: "linux-mips-softfloat", goos: linux, goarch: mips, gomips: softfloat }
+          - { name: "linux-mips-hardfloat", goos: linux, goarch: mips, gomips: hardfloat }
+          - { name: "linux-mipsle-softfloat", goos: linux, goarch: mipsle, gomips: softfloat }
+          - { name: "linux-mipsle-hardfloat", goos: linux, goarch: mipsle, gomips: hardfloat }
+          - { name: "linux-mips64-softfloat", goos: linux, goarch: mips64, gomips: softfloat }
+          - { name: "linux-mips64-hardfloat", goos: linux, goarch: mips64, gomips: hardfloat }
+          - { name: "linux-mips64le-softfloat", goos: linux, goarch: mips64le, gomips: softfloat }
+          - { name: "linux-mips64le-hardfloat", goos: linux, goarch: mips64le, gomips: hardfloat }
+          - { name: "linux-riscv64", goos: linux, goarch: riscv64 }
+          - { name: "linux-s390x", goos: linux, goarch: s390x }
+          - { name: "linux-ppc64le", goos: linux, goarch: ppc64le }
+          - { name: "linux-loong64", goos: linux, goarch: loong64 }
+          - { name: "windows-amd64-v1", goos: windows, goarch: amd64, goamd64: v1 }
+          - { name: "windows-amd64-v2", goos: windows, goarch: amd64, goamd64: v2 }
+          - { name: "windows-amd64-v3", goos: windows, goarch: amd64, goamd64: v3 }
+          - { name: "windows-386", goos: windows, goarch: "386" }
+          - { name: "windows-arm64", goos: windows, goarch: arm64 }
+          - { name: "darwin-amd64", goos: darwin, goarch: amd64 }
+          - { name: "darwin-arm64", goos: darwin, goarch: arm64 }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.12
+          cache: false
+
+      - name: Cache Go modules
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-mod-linux-${{ hashFiles('go.sum') }}
+          restore-keys: go-mod-linux-
+
+      - name: Calculate version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Set build tags and ldflags
+        run: |
+          set -xeuo pipefail
+          # badlinkname reaches into unexported crypto/tls internals. Go 1.25
+          # rejects that linkname, while the portable badtls implementation is
+          # sufficient for Nowhere's cross-platform artifacts.
+          build_tags=()
+          while IFS= read -r tag; do
+            case "$tag" in
+              badlinkname|tfogo_checklinkname0) ;;
+              *) build_tags+=("$tag") ;;
+            esac
+          done < <(tr ',' '\n' < release/DEFAULT_BUILD_TAGS_OTHERS)
+          (IFS=,; echo "BUILD_TAGS=${build_tags[*]}") >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          set -xeuo pipefail
+          mkdir -p dist
+          BINARY="dist/sing-box"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BINARY="${BINARY}.exe"
+          fi
+          go build -v -trimpath -o "${BINARY}" -tags "${BUILD_TAGS}" \
+            -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' ${LDFLAGS_SHARED} -s -w -buildid=" \
+            ./cmd/sing-box
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOAMD64: ${{ matrix.goamd64 }}
+          GO386: ${{ matrix.go386 }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+          GOMIPS64: ${{ matrix.gomips }}
+
+      - name: Package
+        run: |
+          set -xeuo pipefail
+          cd dist
+          DIR_NAME="sing-box-${VERSION}-${{ matrix.name }}"
+          mkdir -p "${DIR_NAME}"
+          cp ../LICENSE "${DIR_NAME}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            mv sing-box.exe "${DIR_NAME}"
+            zip -r "${DIR_NAME}.zip" "${DIR_NAME}"
+          else
+            mv sing-box "${DIR_NAME}"
+            tar -czvf "${DIR_NAME}.tar.gz" "${DIR_NAME}"
+          fi
+          rm -rf "${DIR_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+
+  release:
+    name: Publish prerelease
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set release tag
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ -z "${TAG}" ]; then
+            TAG="nowhere-dev"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> "$GITHUB_ENV"
+
+      - name: Delete existing prerelease
+        run: gh release delete "${RELEASE_TAG}" --yes --cleanup-tag || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Nowhere ${{ env.RELEASE_TAG }}
+          prerelease: true
+          make_latest: false
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
