@@ -22,7 +22,7 @@ require (
 	github.com/metacubex/utls v1.8.4
 	github.com/mholt/acmez/v3 v3.1.6
 	github.com/miekg/dns v1.1.72
-	github.com/ohmycggk/nowhere-go v1.5.2-beta.1
+	github.com/ohmycggk/nowhere-go v1.5.2-beta.4
 	github.com/openai/openai-go/v3 v3.26.0
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/sagernet/asc-go v0.0.0-20241217030726-d563060fe4e1

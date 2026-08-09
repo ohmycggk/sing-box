@@ -10,7 +10,7 @@ require (
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/gofrs/uuid/v5 v5.4.0
-	github.com/ohmycggk/nowhere-go v1.5.2-beta.1
+	github.com/ohmycggk/nowhere-go v1.5.2-beta.4
 	github.com/sagernet/quic-go v0.59.0-sing-box-mod.4
 	github.com/sagernet/sing v0.8.12-0.20260726145744-ef2df370afca
 	github.com/sagernet/sing-quic v0.6.4-0.20260727025224-43cdc830d7cf
