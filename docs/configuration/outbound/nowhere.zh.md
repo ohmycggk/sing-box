@@ -29,6 +29,9 @@ Nowhere 出站是 SingBox 的 Nowhere 客户端。上传与下载 carrier 通过
 Nowhere 1.5 必须锁步升级。认证绑定 TLS exporter，Portal 与所有客户端必须运行
 匹配的 1.5 实现。
 
+Nowhere 1.7 保留 1.5/1.6 的认证和直连 flow 数据面。本出站发送 HOPS=0，因此直连
+仍兼容 1.5/1.6 Portal；只有 1.7 原生转发 Portal 才会发送非零 HOPS。
+
 ### 字段
 
 #### server
@@ -57,7 +60,7 @@ Carrier 选择：`"tcp"` 或 `"udp"`。
 
 | 矩阵 | TCP 流量 | UDP 流量 | 说明 |
 | --- | --- | --- | --- |
-| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `pool` 生效（默认 `5`，最大 `9`）。 |
+| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `pool` 生效（默认 `5`，最大 `256`）。 |
 | `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。 |
 | `tcp` / `udp` | TLS 上传 + QUIC 下载 | UoT 上传 + DATAGRAM 下载 | 非对称；需要 `with_quic`。 |
 | `udp` / `tcp` | QUIC 上传 + TLS 下载 | DATAGRAM 上传 + UoT 下载 | 非对称；需要 `with_quic`。 |
@@ -72,8 +75,8 @@ Carrier 选择：`"tcp"` 或 `"udp"`。
 
 TLS/TCP 预热连接池大小。仅对 `tcp` / `tcp` 生效。
 
-在 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `9` 时截断为 `9`，
-并记录一次配置警告。
+在 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
+`256`。包含 UDP 的矩阵完全忽略 `pool`，与 Rust v1.7 解析器保持一致。
 
 `pool=0` 只关闭预热，**不会**限制业务 fresh dial。`tcp` / `tcp` 下每个用户
 TCP/UoT flow 仍会消耗一条独立 TLS/TCP carrier。

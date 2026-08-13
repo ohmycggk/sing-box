@@ -29,6 +29,10 @@ download carriers are selected independently via `up` / `down`.
 Nowhere 1.5 is a lockstep upgrade. It binds authentication to the TLS exporter,
 so the Portal and every client must run matching 1.5 implementations.
 
+Nowhere 1.7 keeps the 1.5/1.6 authentication and direct-flow data plane. This
+outbound sends HOPS=0, so direct connections remain compatible with 1.5/1.6
+Portals. Non-zero HOPS is emitted only by a 1.7 native forwarding Portal.
+
 ### Fields
 
 #### server
@@ -57,7 +61,7 @@ Both must be set, or both omitted (default `udp` / `udp`).
 
 | Matrix | TCP traffic | UDP traffic | Notes |
 | --- | --- | --- | --- |
-| `tcp` / `tcp` | One TLS connection | UoT on TLS | `pool` applies (default `5`, max `9`). |
+| `tcp` / `tcp` | One TLS connection | UoT on TLS | `pool` applies (default `5`, max `256`). |
 | `udp` / `udp` | One QUIC stream | QUIC DATAGRAM | Requires `with_quic`. |
 | `tcp` / `udp` | TLS upload + QUIC download | UoT upload + DATAGRAM download | Asymmetric; requires `with_quic`. |
 | `udp` / `tcp` | QUIC upload + TLS download | DATAGRAM upload + UoT download | Asymmetric; requires `with_quic`. |
@@ -72,8 +76,9 @@ return `QUIC is not included in this build`.
 
 TLS/TCP warm pool size. Effective only for `tcp` / `tcp`.
 
-Default `5` when omitted on `tcp` / `tcp`. Negative values are rejected. Values
-above `9` are clamped to `9` and reported once as a configuration warning.
+Default `5` when omitted on `tcp` / `tcp`. Negative values are rejected and
+values above `256` are clamped to `256`. Matrices containing UDP ignore `pool`
+entirely, matching the Rust v1.7 parser.
 
 `pool=0` only disables warm preconnect; it does **not** cap business fresh
 dials. On `tcp` / `tcp`, each user TCP/UoT flow still consumes one dedicated

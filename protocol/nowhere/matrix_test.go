@@ -22,7 +22,7 @@ func TestResolveMatrixDefaultsAndPool(t *testing.T) {
 		{name: "tcp-tcp-default-pool", up: "tcp", down: "tcp", wantUp: "tcp", wantDown: "tcp", wantPool: 5, wantTCP: true},
 		{name: "tcp-tcp-explicit-pool", up: "tcp", down: "tcp", pool: intPtr(3), wantUp: "tcp", wantDown: "tcp", wantPool: 3, wantTCP: true},
 		{name: "tcp-tcp-large-valid-pool", up: "tcp", down: "tcp", pool: intPtr(99), wantUp: "tcp", wantDown: "tcp", wantPool: 99, wantTCP: true},
-		{name: "tcp-tcp-over-limit", up: "tcp", down: "tcp", pool: intPtr(257), wantErr: true},
+		{name: "tcp-tcp-over-limit-clamped", up: "tcp", down: "tcp", pool: intPtr(257), wantUp: "tcp", wantDown: "tcp", wantPool: 256, wantTCP: true, wantWarning: true},
 		{name: "udp-udp-forces-pool-zero", up: "udp", down: "udp", pool: intPtr(5), wantUp: "udp", wantDown: "udp", wantPool: 0, wantQUIC: true, wantWarning: true},
 		{name: "udp-udp-explicit-zero", up: "udp", down: "udp", pool: intPtr(0), wantUp: "udp", wantDown: "udp", wantPool: 0, wantQUIC: true},
 		{name: "tcp-udp-forces-pool-zero", up: "tcp", down: "udp", pool: intPtr(5), wantUp: "tcp", wantDown: "udp", wantPool: 0, wantAsym: true, wantQUIC: true, wantTCP: true, wantWarning: true},
@@ -31,7 +31,7 @@ func TestResolveMatrixDefaultsAndPool(t *testing.T) {
 		{name: "one-sided-down", down: "udp", wantErr: true},
 		{name: "bad-carrier", up: "quic", down: "tcp", wantErr: true},
 		{name: "negative-pool", up: "tcp", down: "tcp", pool: intPtr(-1), wantErr: true},
-		{name: "negative-pool-udp", up: "udp", down: "udp", pool: intPtr(-1), wantErr: true},
+		{name: "negative-pool-udp-ignored", up: "udp", down: "udp", pool: intPtr(-1), wantUp: "udp", wantDown: "udp", wantPool: 0, wantQUIC: true, wantWarning: true},
 	}
 
 	for _, tc := range cases {

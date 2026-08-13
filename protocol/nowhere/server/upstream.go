@@ -140,15 +140,25 @@ func formatDiagnosticEvent(event diagnostic.Event) string {
 
 // NewHandler builds a nowhere-go Handler wired to the SingBox router.
 func NewHandler(tag, typ, detour string, cfg *Config, router adapter.ConnectionRouterEx, logger ContextLogger, observers ...diagnostic.Observer) (*Handler, error) {
+	up := &RouterUpstream{Tag: tag, Type: typ, Detour: detour, Router: router}
+	return NewHandlerWithUpstream(cfg, up, logger, observers...)
+}
+
+// NewHandlerWithUpstream builds a nowhere-go Handler wired to a custom Upstream.
+func NewHandlerWithUpstream(cfg *Config, upstream Upstream, logger ContextLogger, observers ...diagnostic.Observer) (*Handler, error) {
 	observer := AdaptObserver(logger)
 	if len(observers) > 0 && observers[0] != nil {
 		observer = observers[0]
 	}
-	up := &RouterUpstream{Tag: tag, Type: typ, Detour: detour, Router: router}
 	return gonowhere.NewHandler(gonowhere.HandlerOptions{
-		Config: cfg, Upstream: up, Observer: observer,
+		Config: cfg, Upstream: upstream, Observer: observer,
 	})
 }
+
+// NewPortalUpstream returns a native Portal-to-Portal forwarding Upstream.
+// The bundle remains caller-owned and must be closed after the handler using
+// it has been shut down.
+var NewPortalUpstream = gonowhere.NewPortalUpstream
 
 // AsCloseHandler converts N.CloseHandlerFunc to nowhere-go CloseHandler.
 func AsCloseHandler(onClose N.CloseHandlerFunc) gonowhere.CloseHandler {

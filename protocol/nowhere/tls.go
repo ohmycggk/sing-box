@@ -1,9 +1,12 @@
 package nowhere
 
 import (
+	"net/netip"
+	"strings"
+
+	"github.com/sagernet/sing-box/common/tls"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/common/tls"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 
@@ -42,13 +45,45 @@ func normalizeNowhereOutboundTLS(options *option.OutboundTLSOptions) (*option.Ou
 	return &clone, nil
 }
 
+// normalizeNowhereNextServerName applies the Rust Vector sni contract to the
+// chained Portal's server_name: empty or "none" disables certificate
+// verification (the endpoint host may still be sent as ClientHello SNI), while
+// an explicit name must be an ASCII DNS name of at most 253 bytes, without
+// ':'/'['/']' and not an IP literal.
+func normalizeNowhereNextServerName(serverName string) (string, error) {
+	if serverName == "" || serverName == "none" {
+		return "", nil
+	}
+	if len(serverName) > 253 || !isASCII(serverName) || strings.ContainsAny(serverName, ":[]") {
+		return "", E.New("nowhere: next server_name must be an ASCII DNS name")
+	}
+	if _, err := netip.ParseAddr(serverName); err == nil {
+		return "", E.New("nowhere: next server_name must be an ASCII DNS name")
+	}
+	return serverName, nil
+}
+
+func isASCII(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] > 127 {
+			return false
+		}
+	}
+	return true
+}
+
 // applyNowhereCertificatePin installs a leaf-certificate SHA-256 pin verifier on
-// the host TLS client config. Pin overrides SNI/chain checks.
+// the host TLS client config. Empty or "none" disables pinning (Rust contract);
+// a real pin overrides SNI/chain checks.
 func applyNowhereCertificatePin(config tls.Config, pin string) error {
-	if pin == "" {
+	parsed, err := wire.ParseCertificatePin(pin)
+	if err != nil {
+		return err
+	}
+	if parsed == "" {
 		return nil
 	}
-	verifier, err := wire.PeerCertificatePinVerifier(pin)
+	verifier, err := wire.PeerCertificatePinVerifier(parsed)
 	if err != nil {
 		return err
 	}

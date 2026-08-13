@@ -1,6 +1,7 @@
 package nowhere
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/sagernet/sing-box/option"
@@ -31,10 +32,49 @@ func TestNormalizeNowhereTLSPreservesSingleCustomALPN(t *testing.T) {
 	require.Equal(t, "1.3", normalized.MaxVersion)
 }
 
+// TestApplyNowhereCertificatePinNoneDisables covers the Rust "none" sentinel:
+// empty or "none" disables pinning (nil config is never touched), while a
+// malformed pin is rejected.
+func TestApplyNowhereCertificatePinNoneDisables(t *testing.T) {
+	require.NoError(t, applyNowhereCertificatePin(nil, ""))
+	require.NoError(t, applyNowhereCertificatePin(nil, "none"))
+	require.Error(t, applyNowhereCertificatePin(nil, "not-hex"))
+}
+
 func TestNormalizeNowhereTLSRejectsMultipleALPN(t *testing.T) {
 	_, err := normalizeNowhereOutboundTLS(&option.OutboundTLSOptions{
 		Enabled: true,
 		ALPN:    badoption.Listable[string]{"now/1", "h3"},
 	})
 	require.ErrorContains(t, err, "exactly one ALPN")
+}
+
+func TestNormalizeNowhereNextServerName(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty disables verification", "", ""},
+		{"none disables verification", "none", ""},
+		{"dns name kept", "origin.example", "origin.example"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := normalizeNowhereNextServerName(testCase.input)
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, got)
+		})
+	}
+	for _, input := range []string{
+		"127.0.0.1",
+		"::1",
+		"exa:mple.org",
+		"ex[ample.org",
+		"exa]mple.org",
+		"münchen.example",
+		strings.Repeat("a", 254),
+	} {
+		_, err := normalizeNowhereNextServerName(input)
+		require.ErrorContains(t, err, "must be an ASCII DNS name", "input %q", input)
+	}
 }
