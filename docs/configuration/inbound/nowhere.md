@@ -18,6 +18,16 @@ icon: material/new-box
   ],
   "tls": {},
   "quic_congestion_control": "bbr",
+  "next": {
+    "server": "origin.example",
+    "server_port": 2080,
+    "password": "origin-key",
+    "up": "tcp",
+    "down": "tcp",
+    "pool": 5,
+    "server_name": "origin.example",
+    "pin": "<leaf cert sha256 hex>"
+  },
 
   ... // QUIC Fields
 }
@@ -25,12 +35,20 @@ icon: material/new-box
 
 Nowhere Portal is the SingBox inbound for the Nowhere protocol. It accepts
 TLS/TCP and (with `with_quic`) QUIC/UDP carriers, authenticates clients, and
-routes TCP/UDP targets through the SingBox router.
+routes TCP/UDP targets through the SingBox router (unless chained to another
+Portal via `next`).
 
 Plaintext inbound is not allowed. TLS must be enabled.
 
 Nowhere 1.5 is a lockstep upgrade. It binds authentication to the TLS exporter,
 so this Portal and every client must run matching 1.5 implementations.
+
+Nowhere 1.7 keeps the 1.5/1.6 authentication and data-plane formats but assigns
+the FLOW header's high three bits to a HOPS forwarding budget, enabling native
+Portal chaining via `next`. The bundled nowhere-go dependency is bumped to
+v1.7.0. Direct clients still interoperate with 1.5/1.6 Portals; every Portal in
+a native chain must run Nowhere 1.7 or later, because older endpoints reject
+nonzero HOPS as reserved bits.
 
 ### Listen Fields
 
@@ -98,6 +116,31 @@ Available values: `bbr`, `bbr_standard`, `bbr2`, `bbr2_variant`, `cubic`, and
 `reno`. An unknown value is rejected while constructing the inbound. This
 setting only affects QUIC/UDP carriers and does not implement a bandwidth rate
 limit. The inbound and outbound may use different controllers.
+
+#### next
+
+Optional native Portal chaining. When set, the Portal forwards **every**
+accepted flow to the next Nowhere Portal instead of dialing the target itself:
+SingBox routing and detour are bypassed entirely, with no fallback. When
+omitted, flows are routed normally.
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `server` | ==Required== | Next Portal address. |
+| `server_port` | ==Required== | Next Portal port. |
+| `password` | ==Required== | Shared key of the next Portal. |
+| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal; both must be set, or both omitted. Any matrix that includes `udp` requires build tag `with_quic`. |
+| `pool` | `5` for `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; matrices containing UDP ignore `pool` entirely. |
+| `server_name` | none | DNS name used to verify the next Portal's TLS certificate. Omitted, empty, or the literal `"none"` disables certificate verification; the endpoint host may still be sent as the ClientHello SNI. |
+| `pin` | none | SHA-256 hex fingerprint of the next Portal's leaf certificate. Omitted, empty, or `"none"` disables pinning; a real pin overrides `server_name` and chain verification. |
+
+The chained upstream client inherits the inbound TLS ALPN.
+
+Hop budget: the first forwarding Portal initializes HOPS to 7, each
+Portal-to-Portal hop decrements it by one, and a Portal that would forward an
+exhausted flow (HOPS=1) rejects it with `FLOW_LIMIT` before opening the next
+hop. Setup rejection codes from an upstream Portal propagate downstream
+unchanged. Every Portal in a chain must run Nowhere 1.7 or later.
 
 ### QUIC Fields
 

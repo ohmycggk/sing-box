@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ohmycggk/nowhere-go/diagnostic"
 	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
@@ -19,6 +20,7 @@ import (
 	"github.com/sagernet/sing-box/protocol/nowhere/server"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json/badoption"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -53,20 +55,21 @@ type inboundStartFlight struct {
 
 type Inbound struct {
 	inbound.Adapter
-	ctx         context.Context
-	logger      log.ContextLogger
-	listener    inboundListener
-	tlsConfig   tls.ServerConfig
-	config      *server.Config
-	handler     *server.Handler
-	quicServer  inboundQUICServer
-	enableTCP   bool
-	enableUDP   bool
-	lifecycleMu sync.Mutex
-	started     bool
-	closed      bool
-	startFlight *inboundStartFlight
-	restartDone chan struct{}
+	ctx          context.Context
+	logger       log.ContextLogger
+	listener     inboundListener
+	tlsConfig    tls.ServerConfig
+	config       *server.Config
+	handler      *server.Handler
+	nextUpstream *portalUpstreamManager
+	quicServer   inboundQUICServer
+	enableTCP    bool
+	enableUDP    bool
+	lifecycleMu  sync.Mutex
+	started      bool
+	closed       bool
+	startFlight  *inboundStartFlight
+	restartDone  chan struct{}
 
 	shutdownCoordinator inboundShutdownCoordinator
 }
@@ -119,9 +122,23 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		enableTCP: cfg.TCPEnabled(),
 		enableUDP: cfg.UDPEnabled(),
 	}
-	in.handler, err = server.NewHandler(tag, C.TypeNowhere, options.ListenOptions.Detour, cfg, router, logger, observer)
-	if err != nil {
-		return nil, err
+	if options.Next != nil {
+		in.nextUpstream, err = newPortalUpstream(ctx, logger, observer, string(tlsOptions.ALPN[0]), options.Next)
+		if err != nil {
+			return nil, err
+		}
+		// Chained mode forwards through the next native Portal and
+		// intentionally bypasses the sing-box router (Rust no-fallback rule).
+		in.handler, err = server.NewHandlerWithUpstream(cfg, in.nextUpstream, logger, observer)
+		if err != nil {
+			_ = in.nextUpstream.Close()
+			return nil, err
+		}
+	} else {
+		in.handler, err = server.NewHandler(tag, C.TypeNowhere, options.ListenOptions.Detour, cfg, router, logger, observer)
+		if err != nil {
+			return nil, err
+		}
 	}
 	opts := listener.Options{
 		Context: ctx,
@@ -144,6 +161,66 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		)
 	}
 	return in, nil
+}
+
+// newPortalUpstream builds the reloadable client upstream toward the next
+// native Portal. The chained client shares the listener ALPN (Rust contract:
+// the Portal's ALPN is shared by its listener and native upstream client), and
+// next.server_name / next.pin mirror the outbound's tls.server_name and pin.
+func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer diagnostic.Observer, alpn string, next *option.NowhereNextOptions) (*portalUpstreamManager, error) {
+	if next.Password == "" {
+		return nil, E.New("nowhere: missing next password")
+	}
+	if next.Server == "" || next.ServerPort == 0 {
+		return nil, E.New("nowhere: missing next server")
+	}
+	matrix, err := ResolveMatrix(next.Up, next.Down, next.Pool)
+	if err != nil {
+		return nil, err
+	}
+	if matrix.poolWarning != "" {
+		logger.Warn(matrix.poolWarning)
+	}
+	if matrix.NeedsQUIC && !quicIncluded {
+		return nil, C.ErrQUICNotIncluded
+	}
+	credentials, err := wire.NewCredentials(next.Password)
+	if err != nil {
+		return nil, err
+	}
+	serverName, err := normalizeNowhereNextServerName(next.ServerName)
+	if err != nil {
+		return nil, err
+	}
+	// Empty and "none" disable pinning; a real pin overrides both SNI and chain
+	// verification (Rust precedence).
+	pin, err := wire.ParseCertificatePin(next.Pin)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := newCarrierDialPlan(ctx, logger, carrierDialOptions{
+		matrix:      matrix,
+		credentials: credentials,
+		server:      next.ServerOptions,
+		alpn:        alpn,
+		tlsOptions: option.OutboundTLSOptions{
+			Enabled:    true,
+			ServerName: serverName,
+			// Rust contract: an empty server_name disables certificate
+			// verification; NewSTDClient still falls back to the endpoint host
+			// for the ClientHello SNI.
+			Insecure:   serverName == "",
+			ALPN:       badoption.Listable[string]{alpn},
+			MinVersion: "1.3",
+			MaxVersion: "1.3",
+		},
+		pin:      pin,
+		observer: observer,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newPortalUpstreamManager(plan.newBundle, logger)
 }
 
 func (h *Inbound) Start(stage adapter.StartStage) error {
@@ -210,7 +287,13 @@ func (h *Inbound) InterfaceUpdated() {
 		return
 	}
 	h.lifecycleMu.Lock()
-	if h.closed || !h.started || !h.enableUDP || h.quicServer == nil || h.listener == nil {
+	if h.closed || !h.started {
+		h.lifecycleMu.Unlock()
+		return
+	}
+	restartQUIC := h.enableUDP && h.quicServer != nil && h.listener != nil
+	replaceNext := h.nextUpstream != nil
+	if !restartQUIC && !replaceNext {
 		h.lifecycleMu.Unlock()
 		return
 	}
@@ -222,9 +305,16 @@ func (h *Inbound) InterfaceUpdated() {
 	h.restartDone = restartDone
 	quicServer := h.quicServer
 	listener := h.listener
+	nextUpstream := h.nextUpstream
 	h.lifecycleMu.Unlock()
 
-	err := quicServer.Restart(listener.ListenUDP)
+	var err error
+	if replaceNext {
+		err = nextUpstream.Replace()
+	}
+	if restartQUIC {
+		err = errors.Join(err, quicServer.Restart(listener.ListenUDP))
+	}
 
 	h.lifecycleMu.Lock()
 	closed := h.closed
@@ -232,7 +322,7 @@ func (h *Inbound) InterfaceUpdated() {
 	h.restartDone = nil
 	h.lifecycleMu.Unlock()
 	if err != nil && !closed && h.logger != nil {
-		h.logger.Error(E.Cause(err, "nowhere: restart QUIC after interface update"))
+		h.logger.Error(E.Cause(err, "nowhere: refresh network-bound state after interface update"))
 	}
 }
 
@@ -269,6 +359,7 @@ func (h *Inbound) shutdownPhases(ctx context.Context) []func() error {
 	quicServer := h.quicServer
 	listener := h.listener
 	handler := h.handler
+	nextUpstream := h.nextUpstream
 	tlsConfig := h.tlsConfig
 	h.lifecycleMu.Unlock()
 
@@ -280,12 +371,11 @@ func (h *Inbound) shutdownPhases(ctx context.Context) []func() error {
 			<-restartDone
 		}
 	}
-	phases := make([]func() error, 0, 4)
+	phases := make([]func() error, 0, 5)
 	var handlerDone chan struct{}
 	if handler != nil {
-		// Keep the adapter buildable against the currently published v0.5.1
-		// core while allowing a workspace-linked v1.5.2 core to establish its
-		// synchronous admission barrier before host transport cleanup.
+		// Establish the core's synchronous admission barrier before host
+		// transport cleanup when the linked nowhere-go exposes BeginDrain.
 		if drainer, ok := any(handler).(inboundDrainStarter); ok {
 			drainer.BeginDrain()
 		}
@@ -322,6 +412,15 @@ func (h *Inbound) shutdownPhases(ctx context.Context) []func() error {
 			waitLifecycle()
 			waitHandler()
 			return listener.Close()
+		})
+	}
+	if nextUpstream != nil {
+		// PortalUpstream borrows the next-hop bundle: close it only after the
+		// handler has drained every forwarded flow.
+		phases = append(phases, func() error {
+			waitLifecycle()
+			waitHandler()
+			return nextUpstream.Close()
 		})
 	}
 	if tlsConfig != nil {

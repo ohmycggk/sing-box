@@ -49,22 +49,20 @@ func ResolveMatrix(up, down string, pool *int) (Matrix, error) {
 		NeedsQUIC:  up == "udp" || down == "udp",
 		NeedsTCP:   up == "tcp" || down == "tcp",
 	}
-	if pool != nil && *pool < 0 {
-		return Matrix{}, fmt.Errorf("nowhere: pool must be >= 0")
-	}
-	if pool != nil && *pool > MaxPoolSize {
-		return Matrix{}, fmt.Errorf("nowhere: pool %d exceeds maximum %d", *pool, MaxPoolSize)
-	}
-
 	if up == "tcp" && down == "tcp" {
 		if pool == nil {
 			m.Pool = DefaultPoolSize
+		} else if *pool < 0 {
+			return Matrix{}, fmt.Errorf("nowhere: pool must be >= 0")
+		} else if *pool > MaxPoolSize {
+			m.Pool = MaxPoolSize
+			m.poolWarning = fmt.Sprintf("nowhere: pool %d exceeds maximum %d; using %d", *pool, MaxPoolSize, MaxPoolSize)
 		} else {
 			m.Pool = *pool
 		}
 	} else {
-		// Any matrix involving UDP forces pool=0. Preserve compatibility while
-		// making non-zero configuration visible to the host.
+		// Rust parses pool only for tcp/tcp. Every matrix involving UDP ignores
+		// it, including values that would be invalid for a TCP pool.
 		if pool != nil && *pool != 0 {
 			m.poolWarning = fmt.Sprintf("nowhere: pool is only effective for tcp/tcp; ignoring configured value %d", *pool)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"sync"
+	"time"
 
 	corebundle "github.com/ohmycggk/nowhere-go/bundle"
 	"github.com/ohmycggk/nowhere-go/carrier"
@@ -71,6 +72,123 @@ type quicBackendOptions struct {
 	observer          diagnostic.Observer
 }
 
+// carrierDialOptions carries the resolved dial-side inputs shared by the
+// outbound and the chained Portal upstream bundle construction.
+type carrierDialOptions struct {
+	matrix             Matrix
+	credentials        *wire.Credentials
+	server             option.ServerOptions
+	alpn               string
+	tlsOptions         option.OutboundTLSOptions
+	pin                string
+	dialerOptions      option.DialerOptions
+	quicOptions        option.QUICOptions
+	congestionControl  quicsettings.CongestionControl
+	maxConcurrentDials int
+	warmBackoffInitial time.Duration
+	warmBackoffMax     time.Duration
+	prewarmOnStart     bool
+	observer           diagnostic.Observer
+}
+
+// carrierDialPlan holds the dial-side pieces used to (re)build a CarrierBundle.
+type carrierDialPlan struct {
+	matrix         Matrix
+	alpn           string
+	credentials    *wire.Credentials
+	observer       diagnostic.Observer
+	prewarmOnStart bool
+	tcpCfg         *tcptls.Config
+	newQUICBackend func() carrier.QuicBackend
+}
+
+func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options carrierDialOptions) (*carrierDialPlan, error) {
+	tlsConfig, err := tls.NewClient(ctx, logger, options.server.Server, options.tlsOptions)
+	if err != nil {
+		return nil, err
+	}
+	if err := applyNowhereCertificatePin(tlsConfig, options.pin); err != nil {
+		return nil, err
+	}
+	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
+		Context:        ctx,
+		Options:        options.dialerOptions,
+		RemoteIsDomain: options.server.ServerIsDomain(),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	addr := options.server.Build().String()
+	tcpDialer := tcptls.TCPDialer(&socksaddrDialer{dialer: outboundDialer})
+	tlsDialer := tcptls.TLSDialer(&singTLSDialer{config: tlsConfig})
+	overrides, hasOverrides := outboundOverridesFromContext(ctx)
+	if hasOverrides {
+		if overrides.tcpDialer != nil {
+			tcpDialer = overrides.tcpDialer
+		}
+		if overrides.tlsDialer != nil {
+			tlsDialer = overrides.tlsDialer
+		}
+	}
+	plan := &carrierDialPlan{
+		matrix:         options.matrix,
+		alpn:           options.alpn,
+		credentials:    options.credentials,
+		observer:       options.observer,
+		prewarmOnStart: options.prewarmOnStart,
+	}
+	if options.matrix.NeedsTCP {
+		plan.tcpCfg, err = tcptls.NewConfig(tcptls.TCPOptions{
+			Address:            addr,
+			Dialer:             tcpDialer,
+			TLSDialer:          tlsDialer,
+			Observer:           options.observer,
+			MaxConcurrentDials: options.maxConcurrentDials,
+			WarmBackoffInitial: options.warmBackoffInitial,
+			WarmBackoffMax:     options.warmBackoffMax,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	if options.matrix.NeedsQUIC {
+		if hasOverrides && overrides.newQUICBackend != nil {
+			plan.newQUICBackend = overrides.newQUICBackend
+		} else {
+			quicCfg := quicBackendOptions{
+				context:           ctx,
+				address:           addr,
+				serverName:        options.server.Server,
+				tlsConfig:         tlsConfig,
+				quicOptions:       options.quicOptions,
+				dialer:            outboundDialer,
+				congestionControl: options.congestionControl,
+				observer:          options.observer,
+			}
+			plan.newQUICBackend = func() carrier.QuicBackend { return newQuicBackend(quicCfg) }
+		}
+	}
+	return plan, nil
+}
+
+func (p *carrierDialPlan) newBundle() (*corebundle.CarrierBundle, error) {
+	bundleCfg := corebundle.BundleOptions{
+		TCP:            p.tcpCfg,
+		Credentials:    p.credentials,
+		ALPN:           p.alpn,
+		Observer:       p.observer,
+		PoolSize:       p.matrix.Pool,
+		PrewarmOnStart: p.prewarmOnStart,
+		Up:             matrixCarrier(p.matrix.Up),
+		Down:           matrixCarrier(p.matrix.Down),
+	}
+	if p.newQUICBackend != nil {
+		bundleCfg.QUIC = p.newQUICBackend()
+	}
+	return corebundle.NewCarrierBundle(bundleCfg)
+}
+
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereOutboundOptions) (adapter.Outbound, error) {
 	if options.Password == "" {
 		return nil, E.New("nowhere: missing password")
@@ -106,93 +224,30 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	observer := SingObserver{L: logger}
 
-	tlsConfig, err := tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
-	if err != nil {
-		return nil, err
+	maxConcurrentDials := 0
+	if options.MaxConcurrentDials != nil {
+		maxConcurrentDials = *options.MaxConcurrentDials
 	}
-	if err := applyNowhereCertificatePin(tlsConfig, options.Pin); err != nil {
-		return nil, err
-	}
-	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
-		Context:        ctx,
-		Options:        options.DialerOptions,
-		RemoteIsDomain: options.ServerIsDomain(),
+	plan, err := newCarrierDialPlan(ctx, logger, carrierDialOptions{
+		matrix:             matrix,
+		credentials:        credentials,
+		server:             options.ServerOptions,
+		alpn:               alpn,
+		tlsOptions:         common.PtrValueOrDefault(options.TLS),
+		pin:                options.Pin,
+		dialerOptions:      options.DialerOptions,
+		quicOptions:        options.QUICOptions,
+		congestionControl:  congestionControl,
+		maxConcurrentDials: maxConcurrentDials,
+		warmBackoffInitial: options.WarmBackoffInitial.Build(),
+		warmBackoffMax:     options.WarmBackoffMax.Build(),
+		prewarmOnStart:     options.PrewarmOnStart,
+		observer:           observer,
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	server := options.ServerOptions.Build()
-	addr := server.String()
-	tcpDialer := tcptls.TCPDialer(&socksaddrDialer{dialer: outboundDialer})
-	tlsDialer := tcptls.TLSDialer(&singTLSDialer{config: tlsConfig})
-	overrides, hasOverrides := outboundOverridesFromContext(ctx)
-	if hasOverrides {
-		if overrides.tcpDialer != nil {
-			tcpDialer = overrides.tcpDialer
-		}
-		if overrides.tlsDialer != nil {
-			tlsDialer = overrides.tlsDialer
-		}
-	}
-	var tcpCfg *tcptls.Config
-	if matrix.NeedsTCP {
-		tcpCfg, err = tcptls.NewConfig(tcptls.TCPOptions{
-			Address:   addr,
-			Dialer:    tcpDialer,
-			TLSDialer: tlsDialer,
-			Observer:  observer,
-			MaxConcurrentDials: func() int {
-				if options.MaxConcurrentDials == nil {
-					return 0
-				}
-				return *options.MaxConcurrentDials
-			}(),
-			WarmBackoffInitial: options.WarmBackoffInitial.Build(),
-			WarmBackoffMax:     options.WarmBackoffMax.Build(),
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var newQUICBackend func() carrier.QuicBackend
-	if matrix.NeedsQUIC {
-		if hasOverrides && overrides.newQUICBackend != nil {
-			newQUICBackend = overrides.newQUICBackend
-		} else {
-			quicCfg := quicBackendOptions{
-				context:           ctx,
-				address:           addr,
-				serverName:        options.Server,
-				tlsConfig:         tlsConfig,
-				quicOptions:       options.QUICOptions,
-				dialer:            outboundDialer,
-				congestionControl: congestionControl,
-				observer:          observer,
-			}
-			newQUICBackend = func() carrier.QuicBackend { return newQuicBackend(quicCfg) }
-		}
-	}
-
-	newBundle := func() (*corebundle.CarrierBundle, error) {
-		bundleCfg := corebundle.BundleOptions{
-			TCP:            tcpCfg,
-			Credentials:    credentials,
-			ALPN:           alpn,
-			Observer:       observer,
-			PoolSize:       matrix.Pool,
-			PrewarmOnStart: options.PrewarmOnStart,
-			Up:             matrixCarrier(matrix.Up),
-			Down:           matrixCarrier(matrix.Down),
-		}
-		if newQUICBackend != nil {
-			bundleCfg.QUIC = newQUICBackend()
-		}
-		return corebundle.NewCarrierBundle(bundleCfg)
-	}
-
-	b, err := newBundle()
+	b, err := plan.newBundle()
 	if err != nil {
 		return nil, err
 	}
@@ -202,10 +257,10 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter:   outbound.NewAdapterWithDialerOptions(C.TypeNowhere, tag, networks, options.DialerOptions),
 		logger:    logger,
 		observer:  observer,
-		server:    server,
+		server:    options.ServerOptions.Build(),
 		matrix:    matrix,
 		bundle:    b,
-		newBundle: newBundle,
+		newBundle: plan.newBundle,
 	}, nil
 }
 
