@@ -22,6 +22,7 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
@@ -185,3 +186,77 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+
+  docker:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+    needs:
+      - build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: linux-*
+          path: docker-bins
+          merge-multiple: true
+
+      - name: Prepare binaries
+        run: |
+          set -xeuo pipefail
+          extract_binary() {
+            local suffix="$1"
+            local dest="$2"
+            local tarball
+            tarball=$(ls "docker-bins/sing-box-"*"-${suffix}.tar.gz")
+            local tmp
+            tmp=$(mktemp -d)
+            tar -xzf "$tarball" -C "$tmp"
+            cp "$tmp"/*/sing-box "$dest"
+            chmod +x "$dest"
+            rm -rf "$tmp"
+          }
+          extract_binary linux-amd64-v1 sing-box-amd64
+          extract_binary linux-arm64 sing-box-arm64
+          extract_binary linux-armv7 sing-box-armv7
+          extract_binary linux-armv6 sing-box-armv6
+          extract_binary linux-386 sing-box-386
+          extract_binary linux-ppc64le sing-box-ppc64le
+          extract_binary linux-riscv64 sing-box-riscv64
+          extract_binary linux-s390x sing-box-s390x
+          ls -la sing-box-*
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=nowhere-dev
+            type=sha,prefix=dev-,format=short
+            type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.binary
+          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386,linux/ppc64le,linux/riscv64,linux/s390x
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

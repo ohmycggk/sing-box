@@ -19,6 +19,7 @@ env:
 jobs:
   build_binary:
     name: Build binary
+    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
