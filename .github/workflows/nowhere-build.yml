@@ -247,6 +247,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=latest
             type=raw,value=nowhere-dev
             type=sha,prefix=dev-,format=short
             type=raw,value=${{ inputs.version }},enable=${{ inputs.version != '' }}
