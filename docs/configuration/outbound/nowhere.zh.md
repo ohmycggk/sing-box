@@ -54,9 +54,10 @@ Nowhere 1.7 保留 1.5/1.6 的认证和直连 flow 数据面。本出站发送 H
 
 #### up, down
 
-Carrier 选择：`"tcp"` 或 `"udp"`。
+Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
 
 必须同时设置，或同时省略（默认 `udp` / `udp`）。
+`mix` 是 Nowhere 1.8.3 的客户端策略，在写入 FlowHeader 之前按 flow 解析。
 
 | 矩阵 | TCP 流量 | UDP 流量 | 说明 |
 | --- | --- | --- | --- |
@@ -71,9 +72,18 @@ Carrier 选择：`"tcp"` 或 `"udp"`。
 无 `with_quic` 时只能构造 `tcp` / `tcp`；其它矩阵返回
 `QUIC is not included in this build`。
 
+#### mux
+
+TLS 通道成帧。`0`（默认）使用专用 TLS 通道；`1` 启用 Mux 分片。任一方向为 `tcp`
+或 `mix` 时生效；`udp/udp&mux=1` 会规范为 `0`。
+
+#### mix_fallback_timeout
+
+mix 主路由准备超时。省略或 `0` 使用 `1s`。
+
 #### pool
 
-TLS/TCP 预热连接池大小。仅对 `tcp` / `tcp` 生效。
+TLS/TCP 预热连接池大小。仅对 `mux=0` 的 `tcp` / `tcp` 生效。
 
 在 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
 `256`。包含 UDP 的矩阵完全忽略 `pool`，与 Rust v1.7 解析器保持一致。

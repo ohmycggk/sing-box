@@ -174,14 +174,18 @@ func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options c
 
 func (p *carrierDialPlan) newBundle() (*corebundle.CarrierBundle, error) {
 	bundleCfg := corebundle.BundleOptions{
-		TCP:            p.tcpCfg,
-		Credentials:    p.credentials,
-		ALPN:           p.alpn,
-		Observer:       p.observer,
-		PoolSize:       p.matrix.Pool,
-		PrewarmOnStart: p.prewarmOnStart,
-		Up:             matrixCarrier(p.matrix.Up),
-		Down:           matrixCarrier(p.matrix.Down),
+		TCP:                p.tcpCfg,
+		Credentials:        p.credentials,
+		ALPN:               p.alpn,
+		Observer:           p.observer,
+		PoolSize:           p.matrix.Pool,
+		PrewarmOnStart:     p.prewarmOnStart,
+		Up:                 p.matrix.UpCarrier(),
+		Down:               p.matrix.DownCarrier(),
+		MixUp:              p.matrix.MixUp,
+		MixDown:            p.matrix.MixDown,
+		MixFallbackTimeout: p.matrix.MixFallbackTimeout,
+		Mux:                p.matrix.Mux,
 	}
 	if p.newQUICBackend != nil {
 		bundleCfg.QUIC = p.newQUICBackend()
@@ -207,12 +211,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	matrix, err := ResolveMatrix(options.Up, options.Down, options.Pool)
+	matrix, err := ResolveMatrix(MatrixInputs{
+		Up: options.Up, Down: options.Down, Pool: options.Pool, Mux: options.Mux,
+		MixFallbackTimeout: options.MixFallbackTimeout.Build(),
+	})
 	if err != nil {
 		return nil, err
 	}
-	if matrix.poolWarning != "" {
-		logger.Warn(matrix.poolWarning)
+	for _, warning := range matrix.Warnings() {
+		logger.Warn(warning)
 	}
 	if matrix.NeedsQUIC && !quicIncluded {
 		return nil, C.ErrQUICNotIncluded
@@ -403,10 +410,3 @@ func targetFromSocksaddr(destination M.Socksaddr) (wire.Target, error) {
 
 var _ tcptls.TCPDialer = (*socksaddrDialer)(nil)
 var _ tcptls.TLSDialer = (*singTLSDialer)(nil)
-
-func matrixCarrier(value string) wire.Carrier {
-	if value == "tcp" {
-		return wire.CarrierTLSTCP
-	}
-	return wire.CarrierQUIC
-}

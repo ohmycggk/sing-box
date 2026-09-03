@@ -174,12 +174,15 @@ func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer d
 	if next.Server == "" || next.ServerPort == 0 {
 		return nil, E.New("nowhere: missing next server")
 	}
-	matrix, err := ResolveMatrix(next.Up, next.Down, next.Pool)
+	matrix, err := ResolveMatrix(MatrixInputs{
+		Up: next.Up, Down: next.Down, Pool: next.Pool, Mux: next.Mux,
+		MixFallbackTimeout: next.MixFallbackTimeout.Build(),
+	})
 	if err != nil {
 		return nil, err
 	}
-	if matrix.poolWarning != "" {
-		logger.Warn(matrix.poolWarning)
+	for _, warning := range matrix.Warnings() {
+		logger.Warn(warning)
 	}
 	if matrix.NeedsQUIC && !quicIncluded {
 		return nil, C.ErrQUICNotIncluded

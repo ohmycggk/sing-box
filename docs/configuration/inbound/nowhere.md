@@ -129,8 +129,10 @@ omitted, flows are routed normally.
 | `server` | ==Required== | Next Portal address. |
 | `server_port` | ==Required== | Next Portal port. |
 | `password` | ==Required== | Shared key of the next Portal. |
-| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal; both must be set, or both omitted. Any matrix that includes `udp` requires build tag `with_quic`. |
-| `pool` | `5` for `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; matrices containing UDP ignore `pool` entirely. |
+| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
+| `mux` | `0` | `0` dedicated TLS lanes, `1` TLS Mux when TCP is possible. `udp/udp&mux=1` canonicalizes to `0`. |
+| `pool` | `5` for dedicated `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; `mux=1` and QUIC-capable matrices ignore `pool`. |
+| `mix_fallback_timeout` | `1s` | Primary mix-route preparation budget. |
 | `server_name` | none | DNS name used to verify the next Portal's TLS certificate. Omitted, empty, or the literal `"none"` disables certificate verification; the endpoint host may still be sent as the ClientHello SNI. |
 | `pin` | none | SHA-256 hex fingerprint of the next Portal's leaf certificate. Omitted, empty, or `"none"` disables pinning; a real pin overrides `server_name` and chain verification. |
 

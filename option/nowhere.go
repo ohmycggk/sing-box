@@ -26,7 +26,9 @@ type NowhereOutboundOptions struct {
 	Pin                   string             `json:"pin,omitempty"`
 	Up                    string             `json:"up,omitempty"`
 	Down                  string             `json:"down,omitempty"`
+	Mux                   *int               `json:"mux,omitempty"`
 	Pool                  *int               `json:"pool,omitempty"`
+	MixFallbackTimeout    badoption.Duration `json:"mix_fallback_timeout,omitempty"`
 	PrewarmOnStart        bool               `json:"prewarm_on_start,omitempty"`
 	MaxConcurrentDials    *int               `json:"max_concurrent_dials,omitempty"`
 	WarmBackoffInitial    badoption.Duration `json:"warm_backoff_initial,omitempty"`
@@ -41,11 +43,13 @@ type NowhereOutboundOptions struct {
 // local router. ServerName/Pin mirror the outbound's tls.server_name and pin.
 type NowhereNextOptions struct {
 	ServerOptions
-	Password   string `json:"password,omitempty"`
-	Up         string `json:"up,omitempty"`
-	Down       string `json:"down,omitempty"`
-	Pool       *int   `json:"pool,omitempty"`
-	ServerName string `json:"server_name,omitempty"`
+	Password           string             `json:"password,omitempty"`
+	Up                 string             `json:"up,omitempty"`
+	Down               string             `json:"down,omitempty"`
+	Mux                *int               `json:"mux,omitempty"`
+	Pool               *int               `json:"pool,omitempty"`
+	MixFallbackTimeout badoption.Duration `json:"mix_fallback_timeout,omitempty"`
+	ServerName         string             `json:"server_name,omitempty"`
 	// Pin is the leaf certificate SHA-256 (lowercase hex). When set it overrides
 	// SNI/chain verification for the chained Portal TLS (TCP and QUIC).
 	Pin string `json:"pin,omitempty"`

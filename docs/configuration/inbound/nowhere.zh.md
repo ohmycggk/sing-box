@@ -44,7 +44,7 @@ Nowhere 1.5 必须锁步升级。认证绑定 TLS exporter，本 Portal 与所�
 
 Nowhere 1.7 保留 1.5/1.6 的认证与数据面格式，但将 FLOW 头部的高 3 位用作 HOPS
 转发预算，从而支持通过 `next` 进行原生 Portal 链式转发。内置 nowhere-go 依赖已
-升级为 v1.7.0。直连客户端仍可与 1.5/1.6 Portal 互通；链中的每个 Portal 必须运行
+升级为 v1.8.3。直连客户端仍可与 1.5/1.6 Portal 互通；链中的每个 Portal 必须运行
 Nowhere 1.7 或更高版本，因为旧版本端点会将非零 HOPS 视为保留位并拒绝。
 
 ### 监听字段
