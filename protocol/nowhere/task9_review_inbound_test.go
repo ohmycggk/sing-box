@@ -221,7 +221,7 @@ func TestInboundLifecycleIOOutsideMutex(t *testing.T) {
 		}
 		restartDone := make(chan struct{})
 		go func() {
-			inbound.InterfaceUpdated()
+			inbound.InterfaceUpdated(context.Background())
 			close(restartDone)
 		}()
 		restartPhase.waitEntered(t)

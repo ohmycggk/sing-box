@@ -326,7 +326,7 @@ func (o *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return b.OpenUDPAsync(ctx, target)
 }
 
-func (o *Outbound) InterfaceUpdated() {
+func (o *Outbound) InterfaceUpdated(ctx context.Context) {
 	o.mu.Lock()
 	bundle := o.bundle
 	o.bundle = nil
