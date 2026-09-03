@@ -282,7 +282,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 	return flight.err
 }
 
-func (h *Inbound) InterfaceUpdated() {
+func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 	if h == nil {
 		return
 	}
@@ -452,7 +452,7 @@ func inboundHandlerShutdownContext(ctx context.Context) (context.Context, contex
 	return context.WithDeadline(ctx, deadline.Add(-reserve))
 }
 
-func (h *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	err := h.handler.ServeTCP(ctx, conn, metadata.Source, func(handshakeCtx context.Context, raw net.Conn) (wire.HandshakedConn, error) {
 		handshaked, err := tls.ServerHandshake(handshakeCtx, raw, h.tlsConfig)
 		if err != nil {

@@ -181,7 +181,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 	relayInbound := relay.(*Inbound)
 	oldBundle := relayInbound.nextUpstream.currentBundleForTest()
 	require.NotNil(t, oldBundle)
-	relayInbound.InterfaceUpdated()
+	relayInbound.InterfaceUpdated(context.Background())
 	newBundle := relayInbound.nextUpstream.currentBundleForTest()
 	require.NotNil(t, newBundle)
 	require.NotSame(t, oldBundle, newBundle)

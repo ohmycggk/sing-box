@@ -30,6 +30,7 @@ func RegisterOutbound(registry *outbound.Registry) {
 var (
 	_ adapter.Outbound                = (*tuic.Outbound)(nil)
 	_ adapter.InterfaceUpdateListener = (*tuic.Outbound)(nil)
+	_ adapter.IdleConnectionCloser    = (*Outbound)(nil)
 )
 
 type Outbound struct {
@@ -70,21 +71,19 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		receiveBps = uint64(options.DownMbps) * hysteria.MbpsToBps
 	}
 	client, err := hysteria.NewClient(hysteria.ClientOptions{
-		Context:             ctx,
-		Dialer:              outboundDialer,
-		Logger:              logger,
-		ServerAddress:       options.ServerOptions.Build(),
-		ServerPorts:         options.ServerPorts,
-		HopInterval:         time.Duration(options.HopInterval),
-		SendBPS:             sendBps,
-		ReceiveBPS:          receiveBps,
-		XPlusPassword:       options.Obfs,
-		Password:            password,
-		TLSConfig:           tlsConfig,
-		UDPDisabled:         !common.Contains(networkList, N.NetworkUDP),
-		ConnReceiveWindow:   options.ReceiveWindowConn,
-		StreamReceiveWindow: options.ReceiveWindow,
-		DisableMTUDiscovery: options.DisableMTUDiscovery,
+		Context:       ctx,
+		Dialer:        outboundDialer,
+		Logger:        logger,
+		ServerAddress: options.ServerOptions.Build(),
+		ServerPorts:   options.ServerPorts,
+		HopInterval:   time.Duration(options.HopInterval),
+		SendBPS:       sendBps,
+		ReceiveBPS:    receiveBps,
+		XPlusPassword: options.Obfs,
+		Password:      password,
+		TLSConfig:     tlsConfig,
+		QUICOptions:   buildOutboundQUICOptions(options),
+		UDPDisabled:   !common.Contains(networkList, N.NetworkUDP),
 	})
 	if err != nil {
 		return nil, err
@@ -117,8 +116,12 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return h.client.ListenPacket(ctx, destination)
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	h.client.CloseWithError(E.New("network changed"))
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
 }
 
 func (h *Outbound) Close() error {

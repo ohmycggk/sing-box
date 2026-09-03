@@ -9,8 +9,6 @@ import (
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/congestion"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
-	"github.com/sagernet/sing-quic/congestion_bbr1"
-	"github.com/sagernet/sing-quic/congestion_bbr2"
 	congestion_meta1 "github.com/sagernet/sing-quic/congestion_meta1"
 	congestion_meta2 "github.com/sagernet/sing-quic/congestion_meta2"
 	"github.com/sagernet/sing/common/ntp"
@@ -30,34 +28,21 @@ const (
 var ParseCongestionControl = quicsettings.ParseCongestionControl
 
 // NewCongestionController constructs the selected controller for one QUIC connection.
+//
+// sing-quic v0.7 dropped the standalone BBR1/BBR2 packages. Public option names
+// are unchanged: bbr/bbr_standard use the standard BBR profile, bbr2 uses
+// conservative, and bbr2_variant uses aggressive.
 func NewCongestionController(ctx context.Context, connection *quic.Conn, selected CongestionControl) congestion.CongestionControl {
 	timeFunc := ntp.TimeFuncFromContext(ctx)
 	if timeFunc == nil {
 		timeFunc = time.Now
 	}
-	packetSize := congestion.ByteCount(connection.Config().InitialPacketSize)
+	packetSize := connection.InitialPacketSize()
 	switch selected {
-	case CongestionControlBBRStandard:
-		return congestion_bbr1.NewBbrSender(
-			congestion_bbr1.DefaultClock{TimeFunc: timeFunc},
-			packetSize,
-			congestion_bbr1.InitialCongestionWindowPackets,
-			congestion_bbr1.MaxCongestionWindowPackets,
-		)
 	case CongestionControlBBR2:
-		return congestion_bbr2.NewBBR2Sender(
-			congestion_bbr2.DefaultClock{TimeFunc: timeFunc},
-			packetSize,
-			0,
-			false,
-		)
+		return congestion_meta2.NewBbrSenderWithProfile(packetSize, congestion_meta2.ProfileConservative)
 	case CongestionControlBBR2Variant:
-		return congestion_bbr2.NewBBR2Sender(
-			congestion_bbr2.DefaultClock{TimeFunc: timeFunc},
-			packetSize,
-			32*packetSize,
-			true,
-		)
+		return congestion_meta2.NewBbrSenderWithProfile(packetSize, congestion_meta2.ProfileAggressive)
 	case CongestionControlCubic:
 		return congestion_meta1.NewCubicSender(
 			congestion_meta1.DefaultClock{TimeFunc: timeFunc},
@@ -70,13 +55,9 @@ func NewCongestionController(ctx context.Context, connection *quic.Conn, selecte
 			packetSize,
 			true,
 		)
-	case CongestionControlBBR:
+	case CongestionControlBBR, CongestionControlBBRStandard:
 		fallthrough
 	default:
-		return congestion_meta2.NewBbrSender(
-			congestion_meta2.DefaultClock{TimeFunc: timeFunc},
-			packetSize,
-			congestion.ByteCount(congestion_meta1.InitialCongestionWindow),
-		)
+		return congestion_meta2.NewBbrSenderWithProfile(packetSize, congestion_meta2.ProfileStandard)
 	}
 }

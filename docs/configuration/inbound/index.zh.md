@@ -32,9 +32,11 @@
 | `vless`       | [VLESS](./vless/)             | TCP              |
 | `anytls`      | [AnyTLS](./anytls/)           | TCP              |
 | `nowhere`     | [Nowhere](./nowhere/)         | :material-close: |
+| `snell`       | [Snell](./snell/)             | TCP              |
 | `tun`         | [Tun](./tun/)                 | :material-close: |
 | `redirect`    | [Redirect](./redirect/)       | :material-close: |
 | `tproxy`      | [TProxy](./tproxy/)           | :material-close: |
+| `cloudflared` | [Cloudflared](./cloudflared/) | :material-close: |
 
 #### tag
 

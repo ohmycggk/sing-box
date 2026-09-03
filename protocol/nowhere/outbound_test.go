@@ -146,7 +146,7 @@ func TestOutboundInterfaceUpdatedRebuildsBundleLazily(t *testing.T) {
 	}
 
 	require.NotNil(t, nw.bundleForTest())
-	nw.InterfaceUpdated()
+	nw.InterfaceUpdated(context.Background())
 	require.Nil(t, nw.bundleForTest())
 	require.Equal(t, int32(0), rebuilds.Load())
 

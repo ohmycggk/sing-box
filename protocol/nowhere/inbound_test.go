@@ -34,5 +34,5 @@ func TestInboundInterfaceUpdatedTCPOnlyIsNoop(t *testing.T) {
 		logger:    log.NewNOPFactory().Logger(),
 		enableUDP: false,
 	}
-	require.NotPanics(t, func() { in.InterfaceUpdated() })
+	require.NotPanics(t, func() { in.InterfaceUpdated(context.Background()) })
 }

@@ -27,6 +27,7 @@ type Session struct {
 	cfg *QUICConfig
 
 	conn       *quic.Conn
+	rawConn    net.Conn
 	openStream func(context.Context) (stream, error)
 	cancel     context.CancelFunc
 	closed     bool
@@ -150,9 +151,9 @@ func (s *Session) dialAndAuth(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("nowhere: udp dial: %w", err)
 	}
-	packetConn := newQUICPacketConn(udpConn)
-	_, bufferControlAvailable := packetConn.(packetConnBufferControl)
+	_, bufferControlAvailable := udpConn.(packetConnBufferControl)
 	s.emitSocketCapabilities(ctx, bufferControlAvailable)
+	qtls.SetDesiredBufferSizes(udpConn)
 	quicConfig := s.cfg.QUICConfig
 	if quicConfig == nil {
 		quicConfig = BuildQUICConfig(option.QUICOptions{})
@@ -161,12 +162,13 @@ func (s *Session) dialAndAuth(ctx context.Context) error {
 		cfgCopy.EnableDatagrams = true
 		quicConfig = &cfgCopy
 	}
-	qconn, err := qtls.Dial(ctx, packetConn, udpConn.RemoteAddr(), s.cfg.TLSConfig, quicConfig)
+	qconn, err := qtls.Dial(ctx, udpConn, s.cfg.TLSConfig, quicConfig)
 	if err != nil {
-		_ = packetConn.Close()
+		_ = udpConn.Close()
 		return fmt.Errorf("nowhere: quic dial: %w", err)
 	}
 	s.conn = qconn
+	s.rawConn = udpConn
 	qconn.SetCongestionControl(NewCongestionController(ctx, qconn, s.cfg.CongestionControl))
 
 	return nil
@@ -378,6 +380,7 @@ func (s *Session) Close() {
 	s.closeOnce.Do(func() {
 		var cancel context.CancelFunc
 		var conn *quic.Conn
+		var rawConn net.Conn
 		s.mu.Lock()
 		s.closed = true
 		if s.idleTimer != nil {
@@ -386,6 +389,8 @@ func (s *Session) Close() {
 		}
 		cancel = s.cancel
 		conn = s.conn
+		rawConn = s.rawConn
+		s.rawConn = nil
 		s.mu.Unlock()
 
 		close(s.lifetimeDone)
@@ -395,6 +400,9 @@ func (s *Session) Close() {
 		}
 		if conn != nil {
 			_ = conn.CloseWithError(quic.ApplicationErrorCode(0), "")
+		}
+		if rawConn != nil {
+			_ = rawConn.Close()
 		}
 	})
 }
