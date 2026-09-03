@@ -207,3 +207,40 @@ func (l *warningLogger) Warnings() []string {
 	defer l.mu.Unlock()
 	return append([]string(nil), l.warnings...)
 }
+
+func TestNewOutboundConstructsMixAndMux(t *testing.T) {
+	t.Parallel()
+	logger := log.NewNOPFactory().Logger()
+	mux := 1
+	out, err := NewOutbound(context.Background(), nil, logger, "nw", option.NowhereOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2077},
+		Password:      "secret",
+		Up:            "tcp",
+		Down:          "tcp",
+		Mux:           &mux,
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"now/1"}},
+		},
+	})
+	require.NoError(t, err)
+	nw := out.(*Outbound)
+	require.Equal(t, 0, nw.matrix.Pool)
+	require.True(t, nw.matrix.Mux == 1)
+	require.NoError(t, nw.Close())
+
+	out, err = NewOutbound(context.Background(), nil, logger, "nw-mix", option.NowhereOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2077},
+		Password:      "secret",
+		Up:            "mix",
+		Down:          "mix",
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"now/1"}},
+		},
+	})
+	require.NoError(t, err)
+	nw = out.(*Outbound)
+	require.True(t, nw.matrix.MixEnabled())
+	require.True(t, nw.matrix.NeedsTCP)
+	require.True(t, nw.matrix.NeedsQUIC)
+	require.NoError(t, nw.Close())
+}

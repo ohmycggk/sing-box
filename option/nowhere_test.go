@@ -83,3 +83,22 @@ func TestNowhereInboundQUICCongestionControlAndRemovedRateFields(t *testing.T) {
 	require.NotContains(t, string(encoded), "up_mbps")
 	require.NotContains(t, string(encoded), "down_mbps")
 }
+
+func TestNowhereMuxMixJSON(t *testing.T) {
+	t.Parallel()
+	var options NowhereOutboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"server":"127.0.0.1",
+		"server_port":2077,
+		"password":"secret",
+		"up":"mix",
+		"down":"mix",
+		"mux":1,
+		"mix_fallback_timeout":"2s",
+		"tls":{"enabled":true,"insecure":true}
+	}`), &options))
+	require.Equal(t, "mix", options.Up)
+	require.NotNil(t, options.Mux)
+	require.Equal(t, 1, *options.Mux)
+	require.Equal(t, 2*time.Second, options.MixFallbackTimeout.Build())
+}

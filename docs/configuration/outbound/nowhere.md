@@ -55,9 +55,10 @@ Shared key. Must match the inbound `password`.
 
 #### up, down
 
-Carrier selectors: `"tcp"` or `"udp"`.
+Carrier selectors: `"tcp"`, `"udp"`, or `"mix"`.
 
 Both must be set, or both omitted (default `udp` / `udp`).
+`mix` is a Nowhere 1.8.3 client policy resolved per flow before FlowHeader.
 
 | Matrix | TCP traffic | UDP traffic | Notes |
 | --- | --- | --- | --- |
@@ -72,13 +73,23 @@ normalized to zero and reported once as a configuration warning.
 Without `with_quic`, only `tcp` / `tcp` can be constructed; other matrices
 return `QUIC is not included in this build`.
 
+#### mux
+
+TLS lane framing. `0` (default) uses dedicated TLS lanes; `1` enables marked Mux
+shards. Mux applies when either direction is `tcp` or `mix`. `udp/udp&mux=1`
+canonicalizes to `0`.
+
+#### mix_fallback_timeout
+
+Primary mix-route preparation budget. Omitted or `0` uses `1s`.
+
 #### pool
 
-TLS/TCP warm pool size. Effective only for `tcp` / `tcp`.
+TLS/TCP warm pool size. Effective only for dedicated (`mux=0`) `tcp` / `tcp`.
 
-Default `5` when omitted on `tcp` / `tcp`. Negative values are rejected and
-values above `256` are clamped to `256`. Matrices containing UDP ignore `pool`
-entirely, matching the Rust v1.7 parser.
+Default `5` when omitted on dedicated `tcp` / `tcp`. Negative values are rejected and
+values above `256` are clamped to `256`. `mux=1` and any matrix that can select
+QUIC ignore `pool`.
 
 `pool=0` only disables warm preconnect; it does **not** cap business fresh
 dials. On `tcp` / `tcp`, each user TCP/UoT flow still consumes one dedicated
