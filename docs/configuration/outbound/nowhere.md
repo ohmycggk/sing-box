@@ -33,6 +33,11 @@ Nowhere 1.7 keeps the 1.5/1.6 authentication and direct-flow data plane. This
 outbound sends HOPS=0, so direct connections remain compatible with 1.5/1.6
 Portals. Non-zero HOPS is emitted only by a 1.7 native forwarding Portal.
 
+Nowhere 1.8 adds TLS Mux (`mux=0` dedicated lanes, `mux=1` marked shards).
+Dedicated `mux=0` clients still interoperate with a 1.8 Portal. Nowhere 1.8.3
+adds the client-only `mix` policy; the data plane is identical to 1.8.2, and
+FlowHeader still carries only TT, TQ, QT, or QQ.
+
 ### Fields
 
 #### server
@@ -59,16 +64,21 @@ Carrier selectors: `"tcp"`, `"udp"`, or `"mix"`.
 
 Both must be set, or both omitted (default `udp` / `udp`).
 `mix` is a Nowhere 1.8.3 client policy resolved per flow before FlowHeader.
+`mix/mix` resolves only to `tcp/tcp` or `udp/udp`. A one-sided mix can resolve
+to a split pair. The primary pair has a one-second preparation budget, then the
+other allowed pair is tried once with a new flow ID.
 
 | Matrix | TCP traffic | UDP traffic | Notes |
 | --- | --- | --- | --- |
-| `tcp` / `tcp` | One TLS connection | UoT on TLS | `pool` applies (default `5`, max `256`). |
-| `udp` / `udp` | One QUIC stream | QUIC DATAGRAM | Requires `with_quic`. |
+| `tcp` / `tcp` | One TLS connection | UoT on TLS | `pool` applies for `mux=0` (default `5`, max `256`). |
+| `udp` / `udp` | One QUIC stream | QUIC DATAGRAM | Requires `with_quic`. `mux=1` canonicalizes to `0`. |
 | `tcp` / `udp` | TLS upload + QUIC download | UoT upload + DATAGRAM download | Asymmetric; requires `with_quic`. |
 | `udp` / `tcp` | QUIC upload + TLS download | DATAGRAM upload + UoT download | Asymmetric; requires `with_quic`. |
+| `mix` / `mix` | Per-flow `tcp/tcp` or `udp/udp` | Same as the resolved pair | Client policy; requires `with_quic`. |
 
-Any matrix that includes UDP forces `pool=0`. A non-zero configured value is
-normalized to zero and reported once as a configuration warning.
+Any matrix that can select QUIC (`udp` or `mix`) forces `pool=0`. A non-zero
+configured value is normalized to zero and reported once as a configuration
+warning.
 
 Without `with_quic`, only `tcp` / `tcp` can be constructed; other matrices
 return `QUIC is not included in this build`.

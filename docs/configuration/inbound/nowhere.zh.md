@@ -43,9 +43,13 @@ Nowhere 1.5 必须锁步升级。认证绑定 TLS exporter，本 Portal 与所�
 匹配的 1.5 实现。
 
 Nowhere 1.7 保留 1.5/1.6 的认证与数据面格式，但将 FLOW 头部的高 3 位用作 HOPS
-转发预算，从而支持通过 `next` 进行原生 Portal 链式转发。内置 nowhere-go 依赖已
-升级为 v1.8.3。直连客户端仍可与 1.5/1.6 Portal 互通；链中的每个 Portal 必须运行
-Nowhere 1.7 或更高版本，因为旧版本端点会将非零 HOPS 视为保留位并拒绝。
+转发预算，从而支持通过 `next` 进行原生 Portal 链式转发。直连客户端仍可与
+1.5/1.6 Portal 互通；链中的每个 Portal 必须运行 Nowhere 1.7 或更高版本，因为
+旧版本端点会将非零 HOPS 视为保留位并拒绝。
+
+内置 nowhere-go 依赖为 v1.8.3。入站 TLS 在 AuthFrame 后自动识别专用通道与 Mux
+分片。`next` 上的 Nowhere 1.8.3 `mix` 是客户端策略，在写入 FlowHeader 之前按
+flow 解析。
 
 ### 监听字段
 
@@ -123,8 +127,10 @@ Nowhere 固定使用 TLS 1.3。省略 ALPN 时会补全为 `now/1`；显式配�
 | `server` | ==必填== | 下一个 Portal 的地址。 |
 | `server_port` | ==必填== | 下一个 Portal 的端口。 |
 | `password` | ==必填== | 下一个 Portal 的共享密钥。 |
-| `up`, `down` | `udp` / `udp` | 通往下一个 Portal 的 carrier 选择；必须同时设置或同时省略。任何包含 `udp` 的矩阵都需要构建标签 `with_quic`。 |
-| `pool` | `tcp` / `tcp` 时为 `5`，否则为 `0` | 通往下一个 Portal 的 TLS/TCP 预热连接池。超过 `256` 的值会钳制为 `256`；包含 UDP 的矩阵完全忽略 `pool`。 |
+| `up`, `down` | `udp` / `udp` | 通往下一个 Portal 的 carrier 选择（`tcp`、`udp` 或 `mix`）；必须同时设置或同时省略。`mix` 是 Nowhere 1.8.3 的客户端策略。任何可能选择 `udp`/`mix` 的矩阵都需要构建标签 `with_quic`。 |
+| `mux` | `0` | `0` 专用 TLS 通道，`1` TLS Mux（当可能走到 TCP 时）。`udp/udp&mux=1` 会规范为 `0`。 |
+| `pool` | 专用 `tcp` / `tcp` 时为 `5`，否则为 `0` | 通往下一个 Portal 的 TLS/TCP 预热连接池。超过 `256` 的值会钳制为 `256`；`mux=1` 与可走到 QUIC 的矩阵忽略 `pool`。 |
+| `mix_fallback_timeout` | `1s` | mix 主路由准备超时。 |
 | `server_name` | 无 | 用于校验下一个 Portal TLS 证书的 DNS 名称。省略、为空或字面量 `"none"` 时关闭证书校验；端点主机名仍可能作为 ClientHello SNI 发送。 |
 | `pin` | 无 | 下一个 Portal 叶子证书的 SHA-256 十六进制指纹。省略、为空或 `"none"` 时关闭证书固定；设置有效 pin 时优先于 `server_name` 与证书链校验。 |
 

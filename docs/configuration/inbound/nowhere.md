@@ -45,10 +45,13 @@ so this Portal and every client must run matching 1.5 implementations.
 
 Nowhere 1.7 keeps the 1.5/1.6 authentication and data-plane formats but assigns
 the FLOW header's high three bits to a HOPS forwarding budget, enabling native
-Portal chaining via `next`. The bundled nowhere-go dependency is bumped to
-v1.7.0. Direct clients still interoperate with 1.5/1.6 Portals; every Portal in
-a native chain must run Nowhere 1.7 or later, because older endpoints reject
-nonzero HOPS as reserved bits.
+Portal chaining via `next`. Direct clients still interoperate with 1.5/1.6
+Portals; every Portal in a native chain must run Nowhere 1.7 or later, because
+older endpoints reject nonzero HOPS as reserved bits.
+
+The bundled nowhere-go dependency is v1.8.3. After AuthFrame, inbound TLS
+auto-detects dedicated lanes versus marked Mux shards. Nowhere 1.8.3 `mix` on
+`next` is a client policy resolved per flow before FlowHeader.
 
 ### Listen Fields
 
@@ -129,7 +132,7 @@ omitted, flows are routed normally.
 | `server` | ==Required== | Next Portal address. |
 | `server_port` | ==Required== | Next Portal port. |
 | `password` | ==Required== | Shared key of the next Portal. |
-| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
+| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. `mix` is a Nowhere 1.8.3 client policy. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
 | `mux` | `0` | `0` dedicated TLS lanes, `1` TLS Mux when TCP is possible. `udp/udp&mux=1` canonicalizes to `0`. |
 | `pool` | `5` for dedicated `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; `mux=1` and QUIC-capable matrices ignore `pool`. |
 | `mix_fallback_timeout` | `1s` | Primary mix-route preparation budget. |

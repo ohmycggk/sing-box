@@ -32,6 +32,10 @@ Nowhere 1.5 必须锁步升级。认证绑定 TLS exporter，Portal 与所有客
 Nowhere 1.7 保留 1.5/1.6 的认证和直连 flow 数据面。本出站发送 HOPS=0，因此直连
 仍兼容 1.5/1.6 Portal；只有 1.7 原生转发 Portal 才会发送非零 HOPS。
 
+Nowhere 1.8 新增 TLS Mux（`mux=0` 专用通道，`mux=1` 标记分片）。`mux=0` 客户端
+仍可对接 1.8 Portal。Nowhere 1.8.3 新增仅客户端的 `mix` 策略；数据面与 1.8.2
+相同，FlowHeader 仍只携带 TT / TQ / QT / QQ。
+
 ### 字段
 
 #### server
@@ -58,16 +62,19 @@ Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
 
 必须同时设置，或同时省略（默认 `udp` / `udp`）。
 `mix` 是 Nowhere 1.8.3 的客户端策略，在写入 FlowHeader 之前按 flow 解析。
+`mix/mix` 只会解析为 `tcp/tcp` 或 `udp/udp`；单边 `mix` 可以解析为非对称对。
+主路由有 1s 准备预算，超时后用新 flow ID 尝试另一条允许的载体对。
 
 | 矩阵 | TCP 流量 | UDP 流量 | 说明 |
 | --- | --- | --- | --- |
-| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `pool` 生效（默认 `5`，最大 `256`）。 |
-| `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。 |
+| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `mux=0` 时 `pool` 生效（默认 `5`，最大 `256`）。 |
+| `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。`mux=1` 会规范为 `0`。 |
 | `tcp` / `udp` | TLS 上传 + QUIC 下载 | UoT 上传 + DATAGRAM 下载 | 非对称；需要 `with_quic`。 |
 | `udp` / `tcp` | QUIC 上传 + TLS 下载 | DATAGRAM 上传 + UoT 下载 | 非对称；需要 `with_quic`。 |
+| `mix` / `mix` | 按 flow 选择 `tcp/tcp` 或 `udp/udp` | 与解析结果相同 | 客户端策略；需要 `with_quic`。 |
 
-任何包含 UDP 的矩阵都会强制 `pool=0`。显式配置非零值时会归一化为零，并记录
-一次配置警告。
+任何可能选择 QUIC（`udp` 或 `mix`）的矩阵都会强制 `pool=0`。显式配置非零值时
+会归一化为零，并记录一次配置警告。
 
 无 `with_quic` 时只能构造 `tcp` / `tcp`；其它矩阵返回
 `QUIC is not included in this build`。
@@ -85,8 +92,8 @@ mix 主路由准备超时。省略或 `0` 使用 `1s`。
 
 TLS/TCP 预热连接池大小。仅对 `mux=0` 的 `tcp` / `tcp` 生效。
 
-在 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
-`256`。包含 UDP 的矩阵完全忽略 `pool`，与 Rust v1.7 解析器保持一致。
+在专用 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
+`256`。`mux=1` 以及任何可能选择 QUIC 的矩阵都会忽略 `pool`。
 
 `pool=0` 只关闭预热，**不会**限制业务 fresh dial。`tcp` / `tcp` 下每个用户
 TCP/UoT flow 仍会消耗一条独立 TLS/TCP carrier。
