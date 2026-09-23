@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	gonowhere "github.com/ohmycggk/nowhere-go/server"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	boxTLS "github.com/sagernet/sing-box/common/tls"
+	nwserver "github.com/sagernet/sing-box/protocol/nowhere/core/server"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/server"
 )
 
@@ -259,10 +259,10 @@ func task9ShutdownConfig(t *testing.T, timeout time.Duration) *server.Config {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := gonowhere.NewConfig(gonowhere.ConfigOptions{
+	config, err := nwserver.NewConfig(nwserver.ConfigOptions{
 		Credentials: credentials,
-		Networks:    []gonowhere.Network{gonowhere.NetworkTCP},
-		Timeouts:    gonowhere.Timeouts{Shutdown: timeout},
+		Networks:    []nwserver.Network{nwserver.NetworkTCP},
+		Timeouts:    nwserver.Timeouts{Shutdown: timeout},
 	})
 	if err != nil {
 		t.Fatal(err)

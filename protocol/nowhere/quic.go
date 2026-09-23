@@ -3,25 +3,26 @@
 package nowhere
 
 import (
-	"github.com/ohmycggk/nowhere-go/carrier"
-	quicpkg "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
+	quic "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier"
 )
 
 const quicIncluded = true
 
 // QUICConfig remains available to with_quic host integrations while the
 // untagged facade stays free of concrete QUIC dependencies.
-type QUICConfig = quicpkg.QUICConfig
+type QUICConfig = quic.QUICConfig
 
 func newQuicBackend(options quicBackendOptions) carrier.QuicBackend {
-	return NewQuicBackend(&quicpkg.QUICConfig{
+	return NewQuicBackend(&quic.QUICConfig{
 		Context:           options.context,
 		Addr:              options.address,
 		ServerName:        options.serverName,
 		TLSConfig:         options.tlsConfig,
-		QUICConfig:        quicpkg.BuildQUICConfig(options.quicOptions),
+		QUICConfig:        quic.BuildQUICConfig(options.quicOptions),
 		Dialer:            options.dialer,
 		CongestionControl: options.congestionControl,
+		MorphSharedKey:    options.morphSharedKey,
 		Observer:          options.observer,
 	})
 }

@@ -10,7 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	nquic "github.com/ohmycggk/nowhere-go/carrier/quic"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
 )
 
 // preparedStream owns an opened QUIC stream until setup bytes are committed.
@@ -20,7 +20,7 @@ type preparedStream struct {
 	once    sync.Once
 }
 
-func (s *Session) PrepareStream(ctx context.Context) (nquic.PreparedStream, error) {
+func (s *Session) PrepareStream(ctx context.Context) (nwquic.PreparedStream, error) {
 	if err := s.EnsureReady(ctx); err != nil {
 		return nil, err
 	}
@@ -176,6 +176,6 @@ func writeAll(writer io.Writer, payload []byte) error {
 }
 
 var (
-	_ nquic.PreparedStream = (*preparedStream)(nil)
-	_ nquic.Session        = (*Session)(nil)
+	_ nwquic.PreparedStream = (*preparedStream)(nil)
+	_ nwquic.Session        = (*Session)(nil)
 )

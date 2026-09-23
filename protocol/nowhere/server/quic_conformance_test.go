@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/ohmycggk/nowhere-go/carrier/quic/conformance"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/quic-go"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic/conformance"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
 func TestInboundQuicConnConformance(t *testing.T) {

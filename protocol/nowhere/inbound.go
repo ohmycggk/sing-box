@@ -7,8 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ohmycggk/nowhere-go/diagnostic"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/inbound"
 	"github.com/sagernet/sing-box/common/listener"
@@ -16,6 +14,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
 	"github.com/sagernet/sing-box/protocol/nowhere/server"
 	"github.com/sagernet/sing/common"
@@ -65,11 +65,17 @@ type Inbound struct {
 	quicServer   inboundQUICServer
 	enableTCP    bool
 	enableUDP    bool
-	lifecycleMu  sync.Mutex
-	started      bool
-	closed       bool
-	startFlight  *inboundStartFlight
-	restartDone  chan struct{}
+	// morphKey is the endpoint password as a Morph shared key. Empty leaves
+	// every carrier bare TLS/QUIC (morph disabled).
+	morphKey []byte
+	// nextMorph is the resolved Morph setting toward the chained next Portal:
+	// next.morph when set, otherwise this inbound's morph.
+	nextMorph   bool
+	lifecycleMu sync.Mutex
+	started     bool
+	closed      bool
+	startFlight *inboundStartFlight
+	restartDone chan struct{}
 
 	shutdownCoordinator inboundShutdownCoordinator
 }
@@ -121,9 +127,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		config:    cfg,
 		enableTCP: cfg.TCPEnabled(),
 		enableUDP: cfg.UDPEnabled(),
+		morphKey:  MorphSharedKey(options.Morph, options.Password),
 	}
 	if options.Next != nil {
-		in.nextUpstream, err = newPortalUpstream(ctx, logger, observer, string(tlsOptions.ALPN[0]), options.Next)
+		nextMorph := resolveNextMorph(options.Morph, options.Next)
+		in.nextMorph = nextMorph
+		in.nextUpstream, err = newPortalUpstream(ctx, logger, observer, string(tlsOptions.ALPN[0]), nextMorph, options.Next)
 		if err != nil {
 			return nil, err
 		}
@@ -163,11 +172,22 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return in, nil
 }
 
+// resolveNextMorph applies the next.morph override contract: nil inherits the
+// inbound endpoint's morph setting, so both legs of a chained hop morph
+// together unless the next hop explicitly opts out (or in).
+func resolveNextMorph(inboundMorph bool, next *option.NowhereNextOptions) bool {
+	if next == nil || next.Morph == nil {
+		return inboundMorph
+	}
+	return *next.Morph
+}
+
 // newPortalUpstream builds the reloadable client upstream toward the next
 // native Portal. The chained client shares the listener ALPN (Rust contract:
-// the Portal's ALPN is shared by its listener and native upstream client), and
-// next.server_name / next.pin mirror the outbound's tls.server_name and pin.
-func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer diagnostic.Observer, alpn string, next *option.NowhereNextOptions) (*portalUpstreamManager, error) {
+// the Portal's ALPN is shared by its listener and native upstream client) and
+// the resolved next.morph, and next.server_name / next.pin mirror the
+// outbound's tls.server_name and pin.
+func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer diagnostic.Observer, alpn string, morph bool, next *option.NowhereNextOptions) (*portalUpstreamManager, error) {
 	if next.Password == "" {
 		return nil, E.New("nowhere: missing next password")
 	}
@@ -217,8 +237,9 @@ func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer d
 			MinVersion: "1.3",
 			MaxVersion: "1.3",
 		},
-		pin:      pin,
-		observer: observer,
+		pin:            pin,
+		morphSharedKey: MorphSharedKey(morph, next.Password),
+		observer:       observer,
 	})
 	if err != nil {
 		return nil, err
@@ -252,6 +273,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 	quicServer := h.quicServer
 	enableTCP := h.enableTCP
 	enableUDP := h.enableUDP
+	morphKey := h.morphKey
 	h.lifecycleMu.Unlock()
 
 	var err error
@@ -265,6 +287,12 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 		var packetConn net.PacketConn
 		packetConn, err = listener.ListenUDP()
 		if err == nil {
+			// Morph seals the shared UDP socket below QUIC (server role);
+			// wrap before the QUIC transport takes ownership, like the
+			// mihomo Portal server reference does before quic.Listen.
+			if len(morphKey) > 0 {
+				packetConn = WrapMorphPacketConn(packetConn, string(morphKey), false)
+			}
 			err = quicServer.Start(packetConn)
 		}
 	}
@@ -316,7 +344,19 @@ func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 		err = nextUpstream.Replace()
 	}
 	if restartQUIC {
-		err = errors.Join(err, quicServer.Restart(listener.ListenUDP))
+		morphKey := h.morphKey
+		err = errors.Join(err, quicServer.Restart(func() (net.PacketConn, error) {
+			packetConn, listenErr := listener.ListenUDP()
+			if listenErr != nil {
+				return nil, listenErr
+			}
+			// Re-apply the Morph seal on every rebound socket so the QUIC
+			// transport keeps speaking the keyed transform below QUIC.
+			if len(morphKey) > 0 {
+				packetConn = WrapMorphPacketConn(packetConn, string(morphKey), false)
+			}
+			return packetConn, nil
+		}))
 	}
 
 	h.lifecycleMu.Lock()
@@ -378,7 +418,7 @@ func (h *Inbound) shutdownPhases(ctx context.Context) []func() error {
 	var handlerDone chan struct{}
 	if handler != nil {
 		// Establish the core's synchronous admission barrier before host
-		// transport cleanup when the linked nowhere-go exposes BeginDrain.
+		// transport cleanup when the Handler exposes BeginDrain.
 		if drainer, ok := any(handler).(inboundDrainStarter); ok {
 			drainer.BeginDrain()
 		}

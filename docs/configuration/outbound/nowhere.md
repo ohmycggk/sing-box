@@ -14,6 +14,7 @@ icon: material/new-box
   "password": "secret",
   "up": "udp",
   "down": "udp",
+  "morph": false,
   "pool": 0,
   "tls": {},
   "quic_congestion_control": "bbr",
@@ -26,17 +27,17 @@ icon: material/new-box
 Nowhere outbound is the SingBox client for the Nowhere protocol. Upload and
 download carriers are selected independently via `up` / `down`.
 
-Nowhere 1.5 is a lockstep upgrade. It binds authentication to the TLS exporter,
-so the Portal and every client must run matching 1.5 implementations.
+This is a Nowhere 2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
+only and does not interoperate with legacy 1.8 peers. Authentication is an
+exporter-bound AuthFrame, the FlowHeader is 5 bytes and carries a HOPS
+forwarding budget of 0..7, TLS Mux is credit-windowed (`mux=0` dedicated
+lanes, `mux=1` marked shards), QUIC UDP headers are packed, and `mix` remains
+a client-side policy resolving to TT / TQ / QT / QQ.
 
-Nowhere 1.7 keeps the 1.5/1.6 authentication and direct-flow data plane. This
-outbound sends HOPS=0, so direct connections remain compatible with 1.5/1.6
-Portals. Non-zero HOPS is emitted only by a 1.7 native forwarding Portal.
-
-Nowhere 1.8 adds TLS Mux (`mux=0` dedicated lanes, `mux=1` marked shards).
-Dedicated `mux=0` clients still interoperate with a 1.8 Portal. Nowhere 1.8.3
-adds the client-only `mix` policy; the data plane is identical to 1.8.2, and
-FlowHeader still carries only TT, TQ, QT, or QQ.
+`morph` enables the Nowhere 2 Morph keyed transform for every carrier of this
+endpoint. Morph is not negotiated in-band: `morph=1` must be enabled on both
+ends of a hop, because the Nowhere 2.1 Morph transform is wire-incompatible
+with the 2.0.x Morph.
 
 ### Fields
 
@@ -63,7 +64,7 @@ Shared key. Must match the inbound `password`.
 Carrier selectors: `"tcp"`, `"udp"`, or `"mix"`.
 
 Both must be set, or both omitted (default `udp` / `udp`).
-`mix` is a Nowhere 1.8.3 client policy resolved per flow before FlowHeader.
+`mix` is a client-side policy resolved per flow before FlowHeader.
 `mix/mix` resolves only to `tcp/tcp` or `udp/udp`. A one-sided mix can resolve
 to a split pair. The primary pair has a one-second preparation budget, then the
 other allowed pair is tried once with a new flow ID.
@@ -105,6 +106,18 @@ QUIC ignore `pool`.
 dials. On `tcp` / `tcp`, each user TCP/UoT flow still consumes one dedicated
 TLS/TCP carrier.
 
+#### morph
+
+Enable the Nowhere 2 Morph keyed transform for every carrier of this endpoint:
+a 64-byte random TCP prelude is sent below TLS before authentication, and
+directional ChaCha20 keys derived from the shared key wrap traffic below both
+TLS and QUIC. Default: `false`.
+
+There is no in-band negotiation. `morph` must be enabled on both ends of a hop
+(client and Portal, or Portal and next Portal), and the Nowhere 2.1 Morph
+transform is wire-incompatible with the 2.0.x Morph, so every peer on a
+`morph=1` hop must run Nowhere 2.1.
+
 #### max_concurrent_dials
 
 Maximum in-flight physical TLS/TCP dials per outbound (dial + TLS + auth).
@@ -127,7 +140,7 @@ business fresh dial.
 TLS configuration, see [TLS](/configuration/shared/tls/#outbound).
 
 Must enable TLS. Nowhere forces TLS 1.3. If ALPN is omitted, it is normalized
-to `now/1`; otherwise exactly one ALPN value is required.
+to `nw2`; otherwise exactly one ALPN value is required.
 
 For a self-signed server, set `insecure: true` or pin the certificate /
 fingerprint explicitly.

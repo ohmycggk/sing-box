@@ -6,10 +6,10 @@ import (
 	"net"
 	"sync"
 
-	"github.com/ohmycggk/nowhere-go/bundle"
-	gonowhere "github.com/ohmycggk/nowhere-go/server"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
+	nwserver "github.com/sagernet/sing-box/protocol/nowhere/core/server"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
 // portalUpstreamManager keeps native Portal forwarding usable across network
@@ -25,7 +25,7 @@ type portalUpstreamManager struct {
 }
 
 type portalUpstreamGeneration struct {
-	upstream *gonowhere.PortalUpstream
+	upstream *nwserver.PortalUpstream
 	bundle   *bundle.CarrierBundle
 	refs     int
 	retired  bool
@@ -46,7 +46,7 @@ func (m *portalUpstreamManager) buildGeneration() (*portalUpstreamGeneration, er
 	if err != nil {
 		return nil, err
 	}
-	upstream, err := gonowhere.NewPortalUpstream(b)
+	upstream, err := nwserver.NewPortalUpstream(b)
 	if err != nil {
 		_ = b.Close()
 		return nil, err
@@ -127,7 +127,7 @@ func closeCarrierBundle(b *bundle.CarrierBundle) error {
 	return b.Close()
 }
 
-func (m *portalUpstreamManager) HandleStream(ctx context.Context, conn net.Conn, source net.Addr, target wire.Target, readiness gonowhere.FlowReadiness) error {
+func (m *portalUpstreamManager) HandleStream(ctx context.Context, conn net.Conn, source net.Addr, target wire.Target, readiness nwserver.FlowReadiness) error {
 	generation, err := m.acquire()
 	if err != nil {
 		if readiness != nil {
@@ -139,7 +139,7 @@ func (m *portalUpstreamManager) HandleStream(ctx context.Context, conn net.Conn,
 	return generation.upstream.HandleStream(ctx, conn, source, target, readiness)
 }
 
-func (m *portalUpstreamManager) HandlePacket(ctx context.Context, pc net.PacketConn, source net.Addr, target wire.Target, readiness gonowhere.FlowReadiness) error {
+func (m *portalUpstreamManager) HandlePacket(ctx context.Context, pc net.PacketConn, source net.Addr, target wire.Target, readiness nwserver.FlowReadiness) error {
 	generation, err := m.acquire()
 	if err != nil {
 		if readiness != nil {
@@ -185,4 +185,4 @@ func (m *portalUpstreamManager) currentBundleForTest() *bundle.CarrierBundle {
 	return m.current.bundle
 }
 
-var _ gonowhere.Upstream = (*portalUpstreamManager)(nil)
+var _ nwserver.Upstream = (*portalUpstreamManager)(nil)

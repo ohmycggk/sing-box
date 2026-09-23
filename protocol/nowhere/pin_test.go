@@ -3,8 +3,8 @@ package nowhere
 import (
 	"testing"
 
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/stretchr/testify/require"
 )
 

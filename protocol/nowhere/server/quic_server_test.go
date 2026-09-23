@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ohmycggk/nowhere-go/diagnostic"
 	"github.com/sagernet/quic-go"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
 	qtls "github.com/sagernet/sing-quic"
 )
 

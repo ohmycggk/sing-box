@@ -6,11 +6,6 @@ import (
 	"sync"
 	"time"
 
-	corebundle "github.com/ohmycggk/nowhere-go/bundle"
-	"github.com/ohmycggk/nowhere-go/carrier"
-	"github.com/ohmycggk/nowhere-go/carrier/tcptls"
-	"github.com/ohmycggk/nowhere-go/diagnostic"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/common/dialer"
@@ -18,6 +13,11 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -56,8 +56,8 @@ type Outbound struct {
 	server    M.Socksaddr
 	matrix    Matrix
 	mu        sync.Mutex
-	bundle    *corebundle.CarrierBundle
-	newBundle func() (*corebundle.CarrierBundle, error)
+	bundle    *bundle.CarrierBundle
+	newBundle func() (*bundle.CarrierBundle, error)
 	closed    bool
 }
 
@@ -69,6 +69,7 @@ type quicBackendOptions struct {
 	quicOptions       option.QUICOptions
 	dialer            N.Dialer
 	congestionControl quicsettings.CongestionControl
+	morphSharedKey    []byte
 	observer          diagnostic.Observer
 }
 
@@ -84,6 +85,7 @@ type carrierDialOptions struct {
 	dialerOptions      option.DialerOptions
 	quicOptions        option.QUICOptions
 	congestionControl  quicsettings.CongestionControl
+	morphSharedKey     []byte
 	maxConcurrentDials int
 	warmBackoffInitial time.Duration
 	warmBackoffMax     time.Duration
@@ -147,6 +149,7 @@ func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options c
 			MaxConcurrentDials: options.maxConcurrentDials,
 			WarmBackoffInitial: options.warmBackoffInitial,
 			WarmBackoffMax:     options.warmBackoffMax,
+			MorphSharedKey:     options.morphSharedKey,
 		})
 		if err != nil {
 			return nil, err
@@ -164,6 +167,7 @@ func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options c
 				quicOptions:       options.quicOptions,
 				dialer:            outboundDialer,
 				congestionControl: options.congestionControl,
+				morphSharedKey:    options.morphSharedKey,
 				observer:          options.observer,
 			}
 			plan.newQUICBackend = func() carrier.QuicBackend { return newQuicBackend(quicCfg) }
@@ -172,8 +176,8 @@ func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options c
 	return plan, nil
 }
 
-func (p *carrierDialPlan) newBundle() (*corebundle.CarrierBundle, error) {
-	bundleCfg := corebundle.BundleOptions{
+func (p *carrierDialPlan) newBundle() (*bundle.CarrierBundle, error) {
+	bundleCfg := bundle.BundleOptions{
 		TCP:                p.tcpCfg,
 		Credentials:        p.credentials,
 		ALPN:               p.alpn,
@@ -190,7 +194,7 @@ func (p *carrierDialPlan) newBundle() (*corebundle.CarrierBundle, error) {
 	if p.newQUICBackend != nil {
 		bundleCfg.QUIC = p.newQUICBackend()
 	}
-	return corebundle.NewCarrierBundle(bundleCfg)
+	return bundle.NewCarrierBundle(bundleCfg)
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereOutboundOptions) (adapter.Outbound, error) {
@@ -235,6 +239,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.MaxConcurrentDials != nil {
 		maxConcurrentDials = *options.MaxConcurrentDials
 	}
+	morphSharedKey := MorphSharedKey(options.Morph, options.Password)
 	plan, err := newCarrierDialPlan(ctx, logger, carrierDialOptions{
 		matrix:             matrix,
 		credentials:        credentials,
@@ -245,6 +250,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dialerOptions:      options.DialerOptions,
 		quicOptions:        options.QUICOptions,
 		congestionControl:  congestionControl,
+		morphSharedKey:     morphSharedKey,
 		maxConcurrentDials: maxConcurrentDials,
 		warmBackoffInitial: options.WarmBackoffInitial.Build(),
 		warmBackoffMax:     options.WarmBackoffMax.Build(),
@@ -271,7 +277,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}, nil
 }
 
-func (o *Outbound) getBundle() (*corebundle.CarrierBundle, error) {
+func (o *Outbound) getBundle() (*bundle.CarrierBundle, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.closed {
@@ -360,7 +366,7 @@ func (o *Outbound) Close() error {
 
 func (o *Outbound) MatrixForTest() Matrix { return o.matrix }
 
-func (o *Outbound) bundleForTest() *corebundle.CarrierBundle {
+func (o *Outbound) bundleForTest() *bundle.CarrierBundle {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.bundle

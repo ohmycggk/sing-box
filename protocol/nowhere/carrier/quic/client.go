@@ -7,8 +7,8 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/ohmycggk/nowhere-go/carrier/dialgate"
-	nquic "github.com/ohmycggk/nowhere-go/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/dialgate"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
 )
 
 // Client caches one handshaked Session per proxy behind the shared dial gate.
@@ -42,7 +42,7 @@ func NewClient(cfg *QUICConfig) *Client {
 	}
 }
 
-func (c *Client) AcquireSession(ctx context.Context) (nquic.Session, error) {
+func (c *Client) AcquireSession(ctx context.Context) (nwquic.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func isCallerContextError(ctx context.Context, err error) bool {
 	return ctxErr != nil && errors.Is(err, ctxErr)
 }
 
-func (c *Client) InvalidateSession(stale nquic.Session) {
+func (c *Client) InvalidateSession(stale nwquic.Session) {
 	session, ok := stale.(*Session)
 	if !ok {
 		return
@@ -183,4 +183,4 @@ func (c *Client) Close() error {
 	return nil
 }
 
-var _ nquic.Backend = (*Client)(nil)
+var _ nwquic.Backend = (*Client)(nil)

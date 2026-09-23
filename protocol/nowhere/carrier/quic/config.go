@@ -6,20 +6,20 @@ import (
 	"context"
 	"time"
 
-	corequic "github.com/ohmycggk/nowhere-go/carrier/quic"
-	"github.com/ohmycggk/nowhere-go/diagnostic"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
 	N "github.com/sagernet/sing/common/network"
 )
 
 const (
 	defaultHandshakeIdleTimeout        = 5 * time.Second
 	defaultIdleTimeout                 = 120 * time.Second
-	defaultStreamReceiveWindow  uint64 = corequic.RecommendedStreamReceiveWindow
-	defaultInitialConnWindow    uint64 = corequic.RecommendedConnectionReceiveWindow
-	defaultMaxConnWindow        uint64 = corequic.RecommendedConnectionReceiveWindow
+	defaultStreamReceiveWindow  uint64 = nwquic.RecommendedStreamReceiveWindow
+	defaultInitialConnWindow    uint64 = nwquic.RecommendedConnectionReceiveWindow
+	defaultMaxConnWindow        uint64 = nwquic.RecommendedConnectionReceiveWindow
 	defaultMaxIncomingStreams   int64  = 1024
 	// quic-go uses a negative Config value to encode an advertised zero; zero
 	// itself means "use the library default" during config normalization.
@@ -27,7 +27,7 @@ const (
 )
 
 // Note: Vector 1.5.2 also sets send_window=32MiB and datagram buffers=4MiB
-// (corequic.RecommendedSendWindow / RecommendedDatagramBufferSize). sagernet
+// (nwquic.RecommendedSendWindow / RecommendedDatagramBufferSize). sagernet
 // quic-go Config does not expose those knobs.
 
 // QUICConfig holds per-proxy QUIC/TLS settings.
@@ -39,8 +39,11 @@ type QUICConfig struct {
 	QUICConfig        *quic.Config
 	Dialer            N.Dialer
 	CongestionControl CongestionControl
-	Observer          diagnostic.Observer
-	IdleCloseDelay    time.Duration
+	// MorphSharedKey enables the Morph keyed transform under QUIC when
+	// non-empty: every client packet socket seals udp c2s and opens udp s2c.
+	MorphSharedKey []byte
+	Observer       diagnostic.Observer
+	IdleCloseDelay time.Duration
 	// DialBackoffInitial / DialBackoffMax control portal session establish backoff.
 	DialBackoffInitial time.Duration
 	DialBackoffMax     time.Duration
