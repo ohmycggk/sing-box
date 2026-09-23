@@ -10,10 +10,11 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 
-	"github.com/ohmycggk/nowhere-go/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
-const defaultALPN = "now/1"
+// defaultALPN is the sole ALPN every Nowhere 2 carrier negotiates.
+const defaultALPN = wire.DefaultALPN
 
 func normalizeNowhereInboundTLS(options *option.InboundTLSOptions) (*option.InboundTLSOptions, error) {
 	if options == nil {

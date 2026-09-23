@@ -3,8 +3,8 @@ package nowhere
 import (
 	"context"
 
-	"github.com/ohmycggk/nowhere-go/diagnostic"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
 )
 
 type SingObserver struct{ L log.ContextLogger }

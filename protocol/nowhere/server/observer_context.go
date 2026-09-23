@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/ohmycggk/nowhere-go/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
 )
 
 type observerContextKey struct{}

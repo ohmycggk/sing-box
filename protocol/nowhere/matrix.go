@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ohmycggk/nowhere-go/bundle"
-	"github.com/ohmycggk/nowhere-go/carrier/tcptls"
-	"github.com/ohmycggk/nowhere-go/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 )
 
 // MatrixInputs is the host-facing carrier/mux/pool policy before it is mapped
-// onto a nowhere-go BundleOptions.
+// onto a nw2 core bundle.BundleOptions.
 type MatrixInputs struct {
 	Up                 string
 	Down               string
@@ -26,7 +26,7 @@ type MatrixInputs struct {
 	MixFallbackTimeout time.Duration
 }
 
-// Matrix is the resolved Nowhere 1.8 client route: concrete or mixed carriers,
+// Matrix is the resolved Nowhere 2.1 client route: concrete or mixed carriers,
 // TLS Mux, and the dedicated tcp/tcp warm pool.
 type Matrix struct {
 	Up, Down           string
@@ -40,7 +40,7 @@ type Matrix struct {
 	warnings           []string
 }
 
-// ResolveMatrix applies Nowhere 1.8.3 outbound defaults and pool/mux rules.
+// ResolveMatrix applies Nowhere 2.1 outbound defaults and pool/mux rules.
 //
 // Carriers default to udp/udp. mix is a client-only policy resolved per flow.
 // mux=1 enables TLS Mux when TCP is possible; udp/udp&mux=1 canonicalizes to 0.

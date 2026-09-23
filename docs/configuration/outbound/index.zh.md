@@ -34,6 +34,7 @@
 | `anytls`       | [AnyTLS](./anytls/)             |
 | `snell`        | [Snell](./snell/)               |
 | `nowhere`      | [Nowhere](./nowhere/)           |
+| `snell`        | [Snell](./snell/)               |
 | `tor`          | [Tor](./tor/)                   |
 | `ssh`          | [SSH](./ssh/)                   |
 | `dns`          | [DNS](./dns/)                   |

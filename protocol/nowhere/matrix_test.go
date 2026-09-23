@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ohmycggk/nowhere-go/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
 )
 
 func TestResolveMatrixDefaultsAndPool(t *testing.T) {

@@ -9,14 +9,14 @@ import (
 	"net"
 	"sync"
 
-	nquic "github.com/ohmycggk/nowhere-go/carrier/quic"
-	"github.com/ohmycggk/nowhere-go/diagnostic"
-	gonowhere "github.com/ohmycggk/nowhere-go/server"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/option"
 	quicpkg "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
+	nwserver "github.com/sagernet/sing-box/protocol/nowhere/core/server"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
 	qtls "github.com/sagernet/sing-quic"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -59,7 +59,7 @@ func (r *quicServerRun) stop() error {
 	return r.stopErr
 }
 
-// QUICServer accepts Nowhere QUIC connections and feeds them to nowhere-go Handler.
+// QUICServer accepts Nowhere QUIC connections and feeds them to the nw2 core Handler.
 type QUICServer struct {
 	Handler *Handler
 	TLS     tls.ServerConfig
@@ -246,7 +246,7 @@ func (s *QUICServer) acceptLoop(run *quicServerRun) {
 	}
 }
 
-// --- quic-go → nowhere-go QuicConn / QuicStream adapters ---
+// --- quic-go → nw2 core QuicConn / QuicStream adapters ---
 
 const defaultMaxDatagramSize = 1200
 
@@ -309,7 +309,7 @@ type quicConnAdapter struct {
 	streamErr      error
 }
 
-func adaptQuicConn(conn *quic.Conn) gonowhere.QuicConn {
+func adaptQuicConn(conn *quic.Conn) nwserver.QuicConn {
 	adapter := &quicConnAdapter{
 		conn:            conn,
 		maxDatagramSize: defaultMaxDatagramSize,
@@ -321,7 +321,7 @@ func adaptQuicConn(conn *quic.Conn) gonowhere.QuicConn {
 	return adapter
 }
 
-func (c *quicConnAdapter) AcceptStream(ctx context.Context) (gonowhere.QuicStream, error) {
+func (c *quicConnAdapter) AcceptStream(ctx context.Context) (nwserver.QuicStream, error) {
 	// Prefer a buffered stream even if the raw QUIC accept loop has already
 	// observed a later terminal error.
 	select {
@@ -339,7 +339,7 @@ func (c *quicConnAdapter) AcceptStream(ctx context.Context) (gonowhere.QuicStrea
 	}
 }
 
-// MarkAuthenticated implements nowhere-go's optional
+// MarkAuthenticated implements the nw2 core's optional
 // QuicAuthenticationNotifier. It is called only after the session has been
 // registered and the datagram pump activated.
 func (c *quicConnAdapter) MarkAuthenticated() {
@@ -347,10 +347,10 @@ func (c *quicConnAdapter) MarkAuthenticated() {
 }
 
 // SetMaxIncomingStreamLimits is a compatibility bridge for the released
-// nowhere-go v0.5.0-rc.1 interface. It intentionally does not call into
-// quic-go: the server already advertises its configured admission limit and
-// the adapter enforces the pre-auth restriction above. Current nowhere-go
-// calls MarkAuthenticated directly after session registration instead.
+// legacy interface. It intentionally does not call into quic-go: the server
+// already advertises its configured admission limit and the adapter enforces
+// the pre-auth restriction above. The current core calls MarkAuthenticated
+// directly after session registration instead.
 func (c *quicConnAdapter) SetMaxIncomingStreamLimits(int64, int64) error {
 	c.MarkAuthenticated()
 	return nil
@@ -461,7 +461,7 @@ func (c *quicConnAdapter) SendDatagram(ctx context.Context, b []byte) error {
 			c.maxDatagramSize = int(tooLarge.MaxDatagramPayloadSize)
 			c.maxDatagramMu.Unlock()
 		}
-		return &nquic.DatagramTooLargeError{
+		return &nwquic.DatagramTooLargeError{
 			MaxDatagramSize: c.CurrentMaxDatagramSize(),
 			Cause:           err,
 		}
@@ -506,6 +506,6 @@ func (s *quicStreamAdapter) Close() error {
 }
 
 var (
-	_ gonowhere.QuicConn   = (*quicConnAdapter)(nil)
-	_ gonowhere.QuicStream = (*quicStreamAdapter)(nil)
+	_ nwserver.QuicConn   = (*quicConnAdapter)(nil)
+	_ nwserver.QuicStream = (*quicStreamAdapter)(nil)
 )

@@ -6,32 +6,33 @@ import (
 	"context"
 	"net"
 
-	nquic "github.com/ohmycggk/nowhere-go/carrier/quic"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
 
-	quicpkg "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
+	quic "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
 )
 
-// QuicBackend wires the sing-box QUIC transport primitives into nowhere-go.
+// QuicBackend wires the sing-box QUIC transport primitives into the vendored
+// nw2 core.
 type QuicBackend struct {
-	client *quicpkg.Client
+	client *quic.Client
 }
 
-func NewQuicBackend(cfg *quicpkg.QUICConfig) *QuicBackend {
+func NewQuicBackend(cfg *quic.QUICConfig) *QuicBackend {
 	if cfg == nil {
 		return &QuicBackend{}
 	}
 	configCopy := *cfg
-	return &QuicBackend{client: quicpkg.NewClient(&configCopy)}
+	return &QuicBackend{client: quic.NewClient(&configCopy)}
 }
 
-func (b *QuicBackend) AcquireSession(ctx context.Context) (nquic.Session, error) {
+func (b *QuicBackend) AcquireSession(ctx context.Context) (nwquic.Session, error) {
 	if b == nil || b.client == nil {
 		return nil, net.ErrClosed
 	}
 	return b.client.AcquireSession(ctx)
 }
 
-func (b *QuicBackend) InvalidateSession(session nquic.Session) {
+func (b *QuicBackend) InvalidateSession(session nwquic.Session) {
 	if b != nil && b.client != nil {
 		b.client.InvalidateSession(session)
 	}
@@ -44,4 +45,4 @@ func (b *QuicBackend) Close() error {
 	return b.client.Close()
 }
 
-var _ nquic.Backend = (*QuicBackend)(nil)
+var _ nwquic.Backend = (*QuicBackend)(nil)

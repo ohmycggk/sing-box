@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	N "github.com/sagernet/sing/common/network"
 )
 

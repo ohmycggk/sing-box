@@ -1,8 +1,8 @@
 package nowhere
 
 import (
-	"github.com/ohmycggk/nowhere-go/carrier/tcptls"
-	"github.com/ohmycggk/nowhere-go/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
 type (

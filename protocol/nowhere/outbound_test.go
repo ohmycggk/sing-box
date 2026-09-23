@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	corebundle "github.com/ohmycggk/nowhere-go/bundle"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
@@ -38,7 +38,7 @@ func TestNewOutboundConstructsTCPOnly(t *testing.T) {
 			TLS: &option.OutboundTLSOptions{
 				Enabled:  true,
 				Insecure: true,
-				ALPN:     badoption.Listable[string]{"now/1"},
+				ALPN:     badoption.Listable[string]{"nw2"},
 			},
 		},
 	})
@@ -140,7 +140,7 @@ func TestOutboundInterfaceUpdatedRebuildsBundleLazily(t *testing.T) {
 	nw := newTestTCPOutbound(t)
 	var rebuilds atomic.Int32
 	base := nw.newBundle
-	nw.newBundle = func() (*corebundle.CarrierBundle, error) {
+	nw.newBundle = func() (*bundle.CarrierBundle, error) {
 		rebuilds.Add(1)
 		return base()
 	}
@@ -178,7 +178,7 @@ func newTestTCPOutbound(t *testing.T) *Outbound {
 			TLS: &option.OutboundTLSOptions{
 				Enabled:  true,
 				Insecure: true,
-				ALPN:     badoption.Listable[string]{"now/1"},
+				ALPN:     badoption.Listable[string]{"nw2"},
 			},
 		},
 	})
@@ -219,7 +219,7 @@ func TestNewOutboundConstructsMixAndMux(t *testing.T) {
 		Down:          "tcp",
 		Mux:           &mux,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"now/1"}},
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	require.NoError(t, err)
@@ -228,13 +228,16 @@ func TestNewOutboundConstructsMixAndMux(t *testing.T) {
 	require.True(t, nw.matrix.Mux == 1)
 	require.NoError(t, nw.Close())
 
+	if !quicIncluded {
+		t.Skip("mix requires with_quic")
+	}
 	out, err = NewOutbound(context.Background(), nil, logger, "nw-mix", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2077},
 		Password:      "secret",
 		Up:            "mix",
 		Down:          "mix",
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"now/1"}},
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	require.NoError(t, err)

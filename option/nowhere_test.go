@@ -15,7 +15,7 @@ func TestNowhereInboundTLSIsNativeOnly(t *testing.T) {
 		var options NowhereInboundOptions
 		require.NoError(t, json.Unmarshal([]byte(`{
 			"password":"secret",
-			"tls":{"enabled":true,"alpn":["now/1"],"certificate_path":"c.pem","key_path":"k.pem"}
+			"tls":{"enabled":true,"alpn":["nw2"],"certificate_path":"c.pem","key_path":"k.pem"}
 		}`), &options))
 		require.NotNil(t, options.TLS)
 		require.True(t, options.TLS.Enabled)
@@ -82,6 +82,75 @@ func TestNowhereInboundQUICCongestionControlAndRemovedRateFields(t *testing.T) {
 	require.Contains(t, string(encoded), `"quic_congestion_control":"bbr2_variant"`)
 	require.NotContains(t, string(encoded), "up_mbps")
 	require.NotContains(t, string(encoded), "down_mbps")
+}
+
+func TestNowhereMorphJSON(t *testing.T) {
+	t.Parallel()
+
+	var outbound NowhereOutboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"server":"127.0.0.1",
+		"server_port":2077,
+		"password":"secret"
+	}`), &outbound))
+	require.False(t, outbound.Morph)
+	encoded, err := json.Marshal(outbound)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "morph")
+
+	var inbound NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret"}`), &inbound))
+	require.False(t, inbound.Morph)
+	encoded, err = json.Marshal(inbound)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), "morph")
+
+	var outboundMorph NowhereOutboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"server":"127.0.0.1",
+		"server_port":2077,
+		"password":"secret",
+		"morph":true
+	}`), &outboundMorph))
+	require.True(t, outboundMorph.Morph)
+	encoded, err = json.Marshal(outboundMorph)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"morph":true`)
+
+	var inboundMorph NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret","morph":true}`), &inboundMorph))
+	require.True(t, inboundMorph.Morph)
+	encoded, err = json.Marshal(inboundMorph)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"morph":true`)
+}
+
+func TestNowhereNextMorphInheritAndOverride(t *testing.T) {
+	t.Parallel()
+
+	var inherit NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"password":"secret",
+		"morph":true,
+		"next":{"server":"origin.example","server_port":2080,"password":"origin-key"}
+	}`), &inherit))
+	require.NotNil(t, inherit.Next)
+	require.True(t, inherit.Morph)
+	require.Nil(t, inherit.Next.Morph)
+
+	var override NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"password":"secret",
+		"morph":true,
+		"next":{"server":"origin.example","server_port":2080,"password":"origin-key","morph":false}
+	}`), &override))
+	require.True(t, override.Morph)
+	require.NotNil(t, override.Next)
+	require.NotNil(t, override.Next.Morph)
+	require.False(t, *override.Next.Morph)
+	encoded, err := json.Marshal(override)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"morph":false`)
 }
 
 func TestNowhereMuxMixJSON(t *testing.T) {

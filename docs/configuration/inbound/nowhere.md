@@ -12,6 +12,7 @@ icon: material/new-box
   ... // Listen Fields
 
   "password": "secret",
+  "morph": false,
   "network": [
     "tcp",
     "udp"
@@ -40,8 +41,18 @@ Portal via `next`).
 
 Plaintext inbound is not allowed. TLS must be enabled.
 
-Nowhere 1.5 is a lockstep upgrade. It binds authentication to the TLS exporter,
-so this Portal and every client must run matching 1.5 implementations.
+This is a Nowhere 2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
+only and does not interoperate with legacy 1.8 peers. Authentication is an
+exporter-bound AuthFrame, the FlowHeader is 5 bytes and carries a HOPS
+forwarding budget of 0..7, and QUIC UDP headers are packed. After AuthFrame,
+inbound TLS auto-detects dedicated lanes (`mux=0`) versus credit-windowed
+marked Mux shards (`mux=1`), and `mix` remains a
+client-side policy resolving to TT / TQ / QT / QQ.
+
+`morph` enables the Nowhere 2 Morph keyed transform for every carrier of this
+endpoint. Morph is not negotiated in-band: `morph=1` must be enabled on both
+ends of a hop, because the Nowhere 2.1 Morph transform is wire-incompatible
+with the 2.0.x Morph.
 
 Nowhere 1.7 keeps the 1.5/1.6 authentication and data-plane formats but assigns
 the FLOW header's high three bits to a HOPS forwarding budget, enabling native
@@ -61,6 +72,18 @@ See [Listen Fields](/configuration/shared/listen/) for details.
 ==Required==
 
 Shared key used to derive auth material. Must match the outbound `password`.
+
+#### morph
+
+Enable the Nowhere 2 Morph keyed transform for every carrier of this Portal:
+a 64-byte random TCP prelude is consumed below TLS before authentication, and
+directional ChaCha20 keys derived from the shared key unwrap traffic below
+both TLS and QUIC. Default: `false`.
+
+There is no in-band negotiation: `morph` must match the client. For a chained
+Portal, each hop inherits this setting unless `next.morph` overrides it. The
+Nowhere 2.1 Morph transform is wire-incompatible with the 2.0.x Morph, so
+every peer on a `morph=1` hop must run Nowhere 2.1.
 
 #### network
 
@@ -92,7 +115,7 @@ by `/64`. Omitted or `0` defaults to `32`. Must not exceed the global limit.
 
 Use the native SingBox TLS object. See [TLS](/configuration/shared/tls/#inbound).
 
-Nowhere always uses TLS 1.3. If ALPN is omitted, it is normalized to `now/1`;
+Nowhere always uses TLS 1.3. If ALPN is omitted, it is normalized to `nw2`;
 otherwise exactly one ALPN value is required.
 
 Recommended native example:
@@ -100,7 +123,7 @@ Recommended native example:
 ```json
 {
   "enabled": true,
-  "alpn": ["now/1"],
+  "alpn": ["nw2"],
   "min_version": "1.3",
   "max_version": "1.3",
   "certificate_path": "/path/cert.pem",
@@ -129,12 +152,13 @@ omitted, flows are routed normally.
 | `server` | ==Required== | Next Portal address. |
 | `server_port` | ==Required== | Next Portal port. |
 | `password` | ==Required== | Shared key of the next Portal. |
-| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
-| `mux` | `0` | `0` dedicated TLS lanes, `1` TLS Mux when TCP is possible. `udp/udp&mux=1` canonicalizes to `0`. |
+| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. `mix` is a client-side policy. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
+| `mux` | `0` | `0` dedicated TLS lanes, `1` credit-windowed TLS Mux when TCP is possible. `udp/udp&mux=1` canonicalizes to `0`. |
 | `pool` | `5` for dedicated `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; `mux=1` and QUIC-capable matrices ignore `pool`. |
 | `mix_fallback_timeout` | `1s` | Primary mix-route preparation budget. |
 | `server_name` | none | DNS name used to verify the next Portal's TLS certificate. Omitted, empty, or the literal `"none"` disables certificate verification; the endpoint host may still be sent as the ClientHello SNI. |
 | `pin` | none | SHA-256 hex fingerprint of the next Portal's leaf certificate. Omitted, empty, or `"none"` disables pinning; a real pin overrides `server_name` and chain verification. |
+| `morph` | inherit inbound `morph` | Enable the Nowhere 2 Morph keyed transform toward the next Portal. Omitted (`nil`) inherits the inbound `morph`; set `true` / `false` to override the hop. Both ends of the hop must agree. |
 
 The chained upstream client inherits the inbound TLS ALPN.
 
@@ -142,7 +166,7 @@ Hop budget: the first forwarding Portal initializes HOPS to 7, each
 Portal-to-Portal hop decrements it by one, and a Portal that would forward an
 exhausted flow (HOPS=1) rejects it with `FLOW_LIMIT` before opening the next
 hop. Setup rejection codes from an upstream Portal propagate downstream
-unchanged. Every Portal in a chain must run Nowhere 1.7 or later.
+unchanged. Every Portal in a chain must run Nowhere 2.1 (`nw2`).
 
 ### QUIC Fields
 

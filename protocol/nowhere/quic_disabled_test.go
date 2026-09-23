@@ -77,7 +77,7 @@ func tcpOnlyOutboundOptions() option.NowhereOutboundOptions {
 		Pool:          &pool,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{
-				Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"now/1"},
+				Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"},
 			},
 		},
 	}

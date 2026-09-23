@@ -2,7 +2,7 @@
 
 package nowhere
 
-import "github.com/ohmycggk/nowhere-go/carrier"
+import "github.com/sagernet/sing-box/protocol/nowhere/core/carrier"
 
 const quicIncluded = false
 

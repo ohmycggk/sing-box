@@ -7,7 +7,7 @@
   "network": ["tcp", "udp"],
   "tls": {
     "enabled": true,
-    "alpn": ["now/1"],
+    "alpn": ["nw2"],
     "min_version": "1.3",
     "max_version": "1.3",
     "certificate_path": "cert.pem",

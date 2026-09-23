@@ -176,6 +176,7 @@ nav:
           - AnyTLS: configuration/inbound/anytls.md
           - Snell: configuration/inbound/snell.md
           - Nowhere: configuration/inbound/nowhere.md
+          - Snell: configuration/inbound/snell.md
           - Tun: configuration/inbound/tun.md
           - Redirect: configuration/inbound/redirect.md
           - TProxy: configuration/inbound/tproxy.md
@@ -200,6 +201,7 @@ nav:
           - AnyTLS: configuration/outbound/anytls.md
           - Snell: configuration/outbound/snell.md
           - Nowhere: configuration/outbound/nowhere.md
+          - Snell: configuration/outbound/snell.md
           - Tor: configuration/outbound/tor.md
           - SSH: configuration/outbound/ssh.md
           - DNS: configuration/outbound/dns.md

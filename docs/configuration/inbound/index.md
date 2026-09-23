@@ -33,6 +33,7 @@
 | `anytls`      | [AnyTLS](./anytls/)           | TCP              |
 | `snell`       | [Snell](./snell/)             | TCP              |
 | `nowhere`     | [Nowhere](./nowhere/)         | :material-close: |
+| `snell`       | [Snell](./snell/)             | TCP              |
 | `tun`         | [Tun](./tun/)                 | :material-close: |
 | `redirect`    | [Redirect](./redirect/)       | :material-close: |
 | `tproxy`      | [TProxy](./tproxy/)           | :material-close: |

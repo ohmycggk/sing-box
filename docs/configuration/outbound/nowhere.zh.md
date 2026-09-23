@@ -14,6 +14,7 @@ icon: material/new-box
   "password": "secret",
   "up": "udp",
   "down": "udp",
+  "morph": false,
   "pool": 0,
   "tls": {},
   "quic_congestion_control": "bbr",
@@ -26,8 +27,14 @@ icon: material/new-box
 Nowhere 出站是 SingBox 的 Nowhere 客户端。上传与下载 carrier 通过 `up` /
 `down` 独立选择。
 
-Nowhere 1.5 必须锁步升级。认证绑定 TLS exporter，Portal 与所有客户端必须运行
-匹配的 1.5 实现。
+这是 Nowhere 2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
+认证使用绑定 TLS exporter 的 AuthFrame；FlowHeader 为 5 字节，携带 0..7 的
+HOPS 转发预算；TLS Mux 基于信用窗口（`mux=0` 专用通道，`mux=1` 标记分片）；
+QUIC UDP 头为打包格式；`mix` 仍是客户端策略，解析为 TT / TQ / QT / QQ。
+
+`morph` 为本端点的所有 carrier 启用 Nowhere 2 Morph 密钥变换。Morph 不会在
+带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.1 的 Morph 变换与
+2.0.x Morph 线级不兼容。
 
 Nowhere 1.7 保留 1.5/1.6 的认证和直连 flow 数据面。本出站发送 HOPS=0，因此直连
 仍兼容 1.5/1.6 Portal；只有 1.7 原生转发 Portal 才会发送非零 HOPS。
@@ -57,17 +64,20 @@ Nowhere 1.7 保留 1.5/1.6 的认证和直连 flow 数据面。本出站发送 H
 Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
 
 必须同时设置，或同时省略（默认 `udp` / `udp`）。
-`mix` 是 Nowhere 1.8.3 的客户端策略，在写入 FlowHeader 之前按 flow 解析。
+`mix` 是客户端策略，在写入 FlowHeader 之前按 flow 解析。
+`mix/mix` 只会解析为 `tcp/tcp` 或 `udp/udp`；单边 `mix` 可以解析为非对称对。
+主路由有 1s 准备预算，超时后用新 flow ID 尝试另一条允许的载体对。
 
 | 矩阵 | TCP 流量 | UDP 流量 | 说明 |
 | --- | --- | --- | --- |
-| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `pool` 生效（默认 `5`，最大 `256`）。 |
-| `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。 |
+| `tcp` / `tcp` | 一条 TLS 连接 | TLS 上的 UoT | `mux=0` 时 `pool` 生效（默认 `5`，最大 `256`）。 |
+| `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。`mux=1` 会规范为 `0`。 |
 | `tcp` / `udp` | TLS 上传 + QUIC 下载 | UoT 上传 + DATAGRAM 下载 | 非对称；需要 `with_quic`。 |
 | `udp` / `tcp` | QUIC 上传 + TLS 下载 | DATAGRAM 上传 + UoT 下载 | 非对称；需要 `with_quic`。 |
+| `mix` / `mix` | 按 flow 选择 `tcp/tcp` 或 `udp/udp` | 与解析结果相同 | 客户端策略；需要 `with_quic`。 |
 
-任何包含 UDP 的矩阵都会强制 `pool=0`。显式配置非零值时会归一化为零，并记录
-一次配置警告。
+任何可能选择 QUIC（`udp` 或 `mix`）的矩阵都会强制 `pool=0`。显式配置非零值时
+会归一化为零，并记录一次配置警告。
 
 无 `with_quic` 时只能构造 `tcp` / `tcp`；其它矩阵返回
 `QUIC is not included in this build`。
@@ -85,11 +95,21 @@ mix 主路由准备超时。省略或 `0` 使用 `1s`。
 
 TLS/TCP 预热连接池大小。仅对 `mux=0` 的 `tcp` / `tcp` 生效。
 
-在 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
-`256`。包含 UDP 的矩阵完全忽略 `pool`，与 Rust v1.7 解析器保持一致。
+在专用 `tcp` / `tcp` 下省略时默认 `5`。负数会被拒绝；超过 `256` 的值会钳制为
+`256`。`mux=1` 以及任何可能选择 QUIC 的矩阵都会忽略 `pool`。
 
 `pool=0` 只关闭预热，**不会**限制业务 fresh dial。`tcp` / `tcp` 下每个用户
 TCP/UoT flow 仍会消耗一条独立 TLS/TCP carrier。
+
+#### morph
+
+为本端点的所有 carrier 启用 Nowhere 2 Morph 密钥变换：TLS 握手完成、认证开始
+之前，会在 TLS 之下先发送一个 64 字节随机 TCP prelude；TLS 与 QUIC 之下都会
+使用由共享密钥派生的方向性 ChaCha20 密钥。默认：`false`。
+
+Morph 不会在带内协商。跳的两端（客户端与 Portal，或 Portal 与下一跳 Portal）
+必须同时启用 `morph`；且 Nowhere 2.1 的 Morph 变换与 2.0.x Morph 线级不兼容，
+因此 `morph=1` 跳上的所有对端都必须运行 Nowhere 2.1。
 
 #### max_concurrent_dials
 
@@ -110,7 +130,7 @@ warm prepare 失败后的指数退避区间。省略时默认 `1s` / `30s`。初
 
 TLS 配置，参阅 [TLS](/zh/configuration/shared/tls/#出站)。
 
-必须启用 TLS。Nowhere 固定使用 TLS 1.3。省略 ALPN 时会补全为 `now/1`；
+必须启用 TLS。Nowhere 固定使用 TLS 1.3。省略 ALPN 时会补全为 `nw2`；
 显式配置时必须且只能提供一个 ALPN。
 
 对接自签服务端时，需设置 `insecure: true`，或显式固定证书 / 指纹。

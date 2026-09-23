@@ -5,17 +5,17 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/ohmycggk/nowhere-go/diagnostic"
-	gonowhere "github.com/ohmycggk/nowhere-go/server"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
+	nwserver "github.com/sagernet/sing-box/protocol/nowhere/core/server"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
 
-// RouterUpstream adapts SingBox ConnectionRouterEx to nowhere-go Upstream.
+// RouterUpstream adapts SingBox ConnectionRouterEx to the nw2 core server Upstream.
 // Route*Ex takes ownership asynchronously; Handle* returns immediately.
 type RouterUpstream struct {
 	Tag    string
@@ -24,26 +24,26 @@ type RouterUpstream struct {
 	Router adapter.ConnectionRouterEx
 }
 
-func (u *RouterUpstream) HandleStream(ctx context.Context, conn net.Conn, source net.Addr, target wire.Target, readiness gonowhere.FlowReadiness) error {
+func (u *RouterUpstream) HandleStream(ctx context.Context, conn net.Conn, source net.Addr, target wire.Target, readiness nwserver.FlowReadiness) error {
 	ctx = log.ContextWithNewID(ctx)
 	metadata := u.metadata(source, target)
-	onClose := asSingClose(gonowhere.CloseHandlerFromContext(ctx))
+	onClose := asSingClose(nwserver.CloseHandlerFromContext(ctx))
 	u.Router.RouteConnectionEx(ctx, &routeReadyConn{Conn: conn, readiness: readiness}, metadata, onClose)
 	return nil
 }
 
-func (u *RouterUpstream) HandlePacket(ctx context.Context, pc net.PacketConn, source net.Addr, target wire.Target, readiness gonowhere.FlowReadiness) error {
+func (u *RouterUpstream) HandlePacket(ctx context.Context, pc net.PacketConn, source net.Addr, target wire.Target, readiness nwserver.FlowReadiness) error {
 	ctx = log.ContextWithNewID(ctx)
 	metadata := u.metadata(source, target)
 	packetConn := bufio.NewPacketConn(pc)
-	onClose := asSingClose(gonowhere.CloseHandlerFromContext(ctx))
+	onClose := asSingClose(nwserver.CloseHandlerFromContext(ctx))
 	u.Router.RoutePacketConnectionEx(ctx, &routeReadyPacketConn{PacketConn: packetConn, readiness: readiness}, metadata, onClose)
 	return nil
 }
 
 type routeReadyConn struct {
 	net.Conn
-	readiness gonowhere.FlowReadiness
+	readiness nwserver.FlowReadiness
 }
 
 func (c *routeReadyConn) ConnHandshakeSuccess(net.Conn) error {
@@ -60,7 +60,7 @@ func (c *routeReadyConn) HandshakeFailure(err error) error {
 
 type routeReadyPacketConn struct {
 	N.PacketConn
-	readiness gonowhere.FlowReadiness
+	readiness nwserver.FlowReadiness
 }
 
 func (c *routeReadyPacketConn) PacketConnHandshakeSuccess(net.PacketConn) error {
@@ -93,7 +93,7 @@ func targetAddress(target wire.Target) string {
 	return net.JoinHostPort(host, strconv.Itoa(int(target.Port)))
 }
 
-func asSingClose(onClose gonowhere.CloseHandler) N.CloseHandlerFunc {
+func asSingClose(onClose nwserver.CloseHandler) N.CloseHandlerFunc {
 	if onClose == nil {
 		return nil
 	}
@@ -112,7 +112,7 @@ type observerAdapter struct {
 	l ContextLogger
 }
 
-// AdaptObserver wraps a sing-box ContextLogger as a structured nowhere-go observer.
+// AdaptObserver wraps a sing-box ContextLogger as a structured nw2 core observer.
 func AdaptObserver(l ContextLogger) diagnostic.Observer {
 	if l == nil {
 		return diagnostic.NopObserver{}
@@ -138,19 +138,19 @@ func formatDiagnosticEvent(event diagnostic.Event) string {
 	return diagnostic.FormatEvent(event)
 }
 
-// NewHandler builds a nowhere-go Handler wired to the SingBox router.
+// NewHandler builds a nw2 core Handler wired to the SingBox router.
 func NewHandler(tag, typ, detour string, cfg *Config, router adapter.ConnectionRouterEx, logger ContextLogger, observers ...diagnostic.Observer) (*Handler, error) {
 	up := &RouterUpstream{Tag: tag, Type: typ, Detour: detour, Router: router}
 	return NewHandlerWithUpstream(cfg, up, logger, observers...)
 }
 
-// NewHandlerWithUpstream builds a nowhere-go Handler wired to a custom Upstream.
+// NewHandlerWithUpstream builds a nw2 core Handler wired to a custom Upstream.
 func NewHandlerWithUpstream(cfg *Config, upstream Upstream, logger ContextLogger, observers ...diagnostic.Observer) (*Handler, error) {
 	observer := AdaptObserver(logger)
 	if len(observers) > 0 && observers[0] != nil {
 		observer = observers[0]
 	}
-	return gonowhere.NewHandler(gonowhere.HandlerOptions{
+	return nwserver.NewHandler(nwserver.HandlerOptions{
 		Config: cfg, Upstream: upstream, Observer: observer,
 	})
 }
@@ -158,14 +158,14 @@ func NewHandlerWithUpstream(cfg *Config, upstream Upstream, logger ContextLogger
 // NewPortalUpstream returns a native Portal-to-Portal forwarding Upstream.
 // The bundle remains caller-owned and must be closed after the handler using
 // it has been shut down.
-var NewPortalUpstream = gonowhere.NewPortalUpstream
+var NewPortalUpstream = nwserver.NewPortalUpstream
 
-// AsCloseHandler converts N.CloseHandlerFunc to nowhere-go CloseHandler.
-func AsCloseHandler(onClose N.CloseHandlerFunc) gonowhere.CloseHandler {
+// AsCloseHandler converts N.CloseHandlerFunc to the nw2 core CloseHandler.
+func AsCloseHandler(onClose N.CloseHandlerFunc) nwserver.CloseHandler {
 	if onClose == nil {
 		return nil
 	}
-	return gonowhere.CloseHandler(onClose)
+	return nwserver.CloseHandler(onClose)
 }
 
 var _ Upstream = (*RouterUpstream)(nil)

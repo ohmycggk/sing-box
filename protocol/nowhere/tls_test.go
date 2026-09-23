@@ -44,7 +44,7 @@ func TestApplyNowhereCertificatePinNoneDisables(t *testing.T) {
 func TestNormalizeNowhereTLSRejectsMultipleALPN(t *testing.T) {
 	_, err := normalizeNowhereOutboundTLS(&option.OutboundTLSOptions{
 		Enabled: true,
-		ALPN:    badoption.Listable[string]{"now/1", "h3"},
+		ALPN:    badoption.Listable[string]{"nw2", "h3"},
 	})
 	require.ErrorContains(t, err, "exactly one ALPN")
 }

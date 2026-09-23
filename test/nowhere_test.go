@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ohmycggk/nowhere-go/carrier/dialgate"
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/dialgate"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
@@ -68,10 +68,10 @@ func TestNowhereQUICInterfaceUpdate(t *testing.T) {
 
 	inbound, loaded := instance.Inbound().Get("nowhere-in")
 	require.True(t, loaded)
-	inbound.(adapter.InterfaceUpdateListener).InterfaceUpdated()
+	inbound.(adapter.InterfaceUpdateListener).InterfaceUpdated(context.Background())
 	outbound, loaded := instance.Outbound().Outbound("nowhere-out")
 	require.True(t, loaded)
-	outbound.(adapter.InterfaceUpdateListener).InterfaceUpdated()
+	outbound.(adapter.InterfaceUpdateListener).InterfaceUpdated(context.Background())
 
 	testNowhereBasicTCPUDP(t, clientPort, testPort)
 }
@@ -91,7 +91,9 @@ func TestNowhereServerRestartReusesOutbound(t *testing.T) {
 	destination := startNowhereLifecycleEcho(t, 1)
 	serverBox := startNowhereServerBox(t, certPem, keyPem)
 	clientBox := startNowhereClientBoxWithQUICOptions(t, certPem, option.QUICOptions{
-		IdleTimeout: badoption.Duration(restartIdleTimeout),
+		HTTP2Options: option.HTTP2Options{
+			IdleTimeout: badoption.Duration(restartIdleTimeout),
+		},
 	})
 	outbound := nowhereLifecycleOutbound(t, clientBox)
 
@@ -779,7 +781,7 @@ func startNowhereInstanceWithQUICOptions(
 							ServerName:      "example.org",
 							CertificatePath: certPem,
 							KeyPath:         keyPem,
-							ALPN:            badoption.Listable[string]{"now/1"},
+							ALPN:            badoption.Listable[string]{"nw2"},
 							MinVersion:      "1.3",
 							MaxVersion:      "1.3",
 						},
@@ -809,7 +811,7 @@ func startNowhereInstanceWithQUICOptions(
 							Enabled:         true,
 							ServerName:      "example.org",
 							CertificatePath: certPem,
-							ALPN:            badoption.Listable[string]{"now/1"},
+							ALPN:            badoption.Listable[string]{"nw2"},
 							MinVersion:      "1.3",
 							MaxVersion:      "1.3",
 						},
@@ -863,7 +865,7 @@ func startNowhereServerBoxWithContext(t *testing.T, parent context.Context, cert
 							ServerName:      "example.org",
 							CertificatePath: certPem,
 							KeyPath:         keyPem,
-							ALPN:            badoption.Listable[string]{"now/1"},
+							ALPN:            badoption.Listable[string]{"nw2"},
 							MinVersion:      "1.3",
 							MaxVersion:      "1.3",
 						},
@@ -916,7 +918,7 @@ func startNowhereClientBoxWithQUICOptions(t *testing.T, certPem string, quicOpti
 							Enabled:         true,
 							ServerName:      "example.org",
 							CertificatePath: certPem,
-							ALPN:            badoption.Listable[string]{"now/1"},
+							ALPN:            badoption.Listable[string]{"nw2"},
 							MinVersion:      "1.3",
 							MaxVersion:      "1.3",
 						},

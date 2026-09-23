@@ -9,13 +9,14 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
-	nquic "github.com/ohmycggk/nowhere-go/carrier/quic"
-	"github.com/ohmycggk/nowhere-go/diagnostic"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/option"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	qtls "github.com/sagernet/sing-quic"
 	M "github.com/sagernet/sing/common/metadata"
 )
@@ -154,6 +155,11 @@ func (s *Session) dialAndAuth(ctx context.Context) error {
 	_, bufferControlAvailable := udpConn.(packetConnBufferControl)
 	s.emitSocketCapabilities(ctx, bufferControlAvailable)
 	qtls.SetDesiredBufferSizes(udpConn)
+	if len(s.cfg.MorphSharedKey) > 0 {
+		// Morph seals the packet socket below QUIC. Buffer sizing and the
+		// capability probe above must see the raw socket first.
+		udpConn = newMorphPacketConn(udpConn, s.cfg.MorphSharedKey)
+	}
 	quicConfig := s.cfg.QUICConfig
 	if quicConfig == nil {
 		quicConfig = BuildQUICConfig(option.QUICOptions{})
@@ -165,6 +171,14 @@ func (s *Session) dialAndAuth(ctx context.Context) error {
 	qconn, err := qtls.Dial(ctx, udpConn, s.cfg.TLSConfig, quicConfig)
 	if err != nil {
 		_ = udpConn.Close()
+		if errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNREFUSED) {
+			// The local packet socket died mid-handshake (for example an ICMP
+			// port unreachable while the server restarts). quic-go tears the
+			// transport down and the raw socket error outranks the dial cause,
+			// so re-surface it under the transient class the shared dial
+			// backoff policy already understands.
+			return fmt.Errorf("nowhere: quic dial: connection refused: %w", err)
+		}
 		return fmt.Errorf("nowhere: quic dial: %w", err)
 	}
 	s.conn = qconn
@@ -323,7 +337,7 @@ func (s *Session) SendDatagram(ctx context.Context, frame []byte) error {
 			s.maxDatagramSize = int(tooLarge.MaxDatagramPayloadSize)
 			s.mu.Unlock()
 		}
-		return &nquic.DatagramTooLargeError{
+		return &nwquic.DatagramTooLargeError{
 			MaxDatagramSize: s.CurrentMaxDatagramSize(),
 			Cause:           err,
 		}

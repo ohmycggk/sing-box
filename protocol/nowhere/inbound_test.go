@@ -7,6 +7,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,4 +36,16 @@ func TestInboundInterfaceUpdatedTCPOnlyIsNoop(t *testing.T) {
 		enableUDP: false,
 	}
 	require.NotPanics(t, func() { in.InterfaceUpdated(context.Background()) })
+}
+
+func TestResolveNextMorph(t *testing.T) {
+	t.Parallel()
+	// nil next and nil next.morph inherit the inbound's morph setting.
+	require.False(t, resolveNextMorph(false, nil))
+	require.True(t, resolveNextMorph(true, nil))
+	require.False(t, resolveNextMorph(false, &option.NowhereNextOptions{}))
+	require.True(t, resolveNextMorph(true, &option.NowhereNextOptions{}))
+	// An explicit next.morph overrides the inbound setting in both directions.
+	require.True(t, resolveNextMorph(false, &option.NowhereNextOptions{Morph: common.Ptr(true)}))
+	require.False(t, resolveNextMorph(true, &option.NowhereNextOptions{Morph: common.Ptr(false)}))
 }

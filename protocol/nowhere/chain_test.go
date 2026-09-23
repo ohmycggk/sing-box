@@ -11,13 +11,13 @@ import (
 	"testing"
 	"time"
 
-	corebundle "github.com/ohmycggk/nowhere-go/bundle"
-	gonowhere "github.com/ohmycggk/nowhere-go/server"
-	"github.com/ohmycggk/nowhere-go/wire"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/tls"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
+	nwserver "github.com/sagernet/sing-box/protocol/nowhere/core/server"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
@@ -213,7 +213,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 func chainTestSetupResultCode(t *testing.T, err error) wire.SetupResult {
 	t.Helper()
 	require.Error(t, err)
-	var setupError *corebundle.SetupResultError
+	var setupError *bundle.SetupResultError
 	require.ErrorAs(t, err, &setupError)
 	return setupError.SetupResultCode()
 }
@@ -448,24 +448,24 @@ func startChainTestEcho(t *testing.T) M.Socksaddr {
 	return M.ParseSocksaddr(address)
 }
 
-// startChainTestOrigin runs a standalone nowhere-go Portal that dials targets
+// startChainTestOrigin runs a standalone nw2 core Portal that dials targets
 // directly. Its QUIC listener is an idle stub: the relay chains over tcp/tcp,
 // so UDP flows arrive as UoT on the TCP carrier. alpn restricts the origin to
-// a single accepted ALPN (empty keeps the default now/1).
+// a single accepted ALPN (empty keeps the default nw2).
 func startChainTestOrigin(t *testing.T, keyPair *stdtls.Certificate, alpn string) uint16 {
 	t.Helper()
 	credentials, err := wire.NewCredentials("origin-key")
 	require.NoError(t, err)
-	config, err := gonowhere.NewConfig(gonowhere.ConfigOptions{
+	config, err := nwserver.NewConfig(nwserver.ConfigOptions{
 		Credentials: credentials,
-		Networks:    []gonowhere.Network{gonowhere.NetworkTCP, gonowhere.NetworkUDP},
+		Networks:    []nwserver.Network{nwserver.NetworkTCP, nwserver.NetworkUDP},
 		ALPN:        alpn,
 	})
 	require.NoError(t, err)
-	origin, err := gonowhere.NewServer(gonowhere.ServerOptions{
+	origin, err := nwserver.NewServer(nwserver.ServerOptions{
 		Config:       config,
 		TLS:          &stdtls.Config{Certificates: []stdtls.Certificate{*keyPair}},
-		Upstream:     gonowhere.NewDialUpstream(nil),
+		Upstream:     nwserver.NewDialUpstream(nil),
 		QUICListener: chainTestIdleQUICListener{},
 	})
 	require.NoError(t, err)
@@ -493,7 +493,7 @@ func startChainTestOrigin(t *testing.T, keyPair *stdtls.Certificate, alpn string
 
 type chainTestIdleQUICListener struct{}
 
-func (chainTestIdleQUICListener) Accept(ctx context.Context) (gonowhere.QuicConn, error) {
+func (chainTestIdleQUICListener) Accept(ctx context.Context) (nwserver.QuicConn, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
