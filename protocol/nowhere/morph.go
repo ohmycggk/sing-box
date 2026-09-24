@@ -24,3 +24,13 @@ func WrapMorphPacketConn(pc net.PacketConn, password string, client bool) net.Pa
 	}
 	return morph.WrapPacketConn(pc, morph.Derive([]byte(password)), client)
 }
+
+// WrapMorphTCPServer consumes the client Morph prelude and nonce, then
+// XOR-transforms TLS bytes. An empty password leaves the connection as bare TLS.
+// Morph must be enabled on both ends of a hop.
+func WrapMorphTCPServer(conn net.Conn, password string) net.Conn {
+	if conn == nil || password == "" {
+		return conn
+	}
+	return morph.WrapTCPServer(conn, morph.Derive([]byte(password)))
+}

@@ -496,6 +496,11 @@ func inboundHandlerShutdownContext(ctx context.Context) (context.Context, contex
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	// Morph seals accepted TCP below TLS. The sing-box listener does not use
+	// core Server.serveTCP, which is the other place this wrap happens.
+	if len(h.morphKey) > 0 {
+		conn = WrapMorphTCPServer(conn, string(h.morphKey))
+	}
 	err := h.handler.ServeTCP(ctx, conn, metadata.Source, func(handshakeCtx context.Context, raw net.Conn) (wire.HandshakedConn, error) {
 		handshaked, err := tls.ServerHandshake(handshakeCtx, raw, h.tlsConfig)
 		if err != nil {
