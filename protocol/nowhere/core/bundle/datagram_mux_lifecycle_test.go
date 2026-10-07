@@ -59,7 +59,7 @@ func TestQUICMuxReleasesOnRawCloseWithoutUDPFlow(t *testing.T) {
 	}
 }
 
-func TestQUICMuxAcquireAfterCloseInvalidatesRaw(t *testing.T) {
+func TestQUICMuxAcquireAfterCloseFailsFast(t *testing.T) {
 	raw := &muxLifecycleSession{receive: make(chan []byte)}
 	backend := &muxLifecycleBackend{}
 	muxBackend := &quicMuxBackend{
@@ -74,14 +74,58 @@ func TestQUICMuxAcquireAfterCloseInvalidatesRaw(t *testing.T) {
 	if err := muxBackend.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// The drain token rejects the acquire before the host is consulted, so a
+	// closed mux consumes no physical session (upstream 206f9c1).
 	if _, err := muxBackend.AcquireSession(context.Background()); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("AcquireSession after Close = %v, want net.ErrClosed", err)
+	}
+	if got := backend.acquires.Load(); got != 0 {
+		t.Fatalf("backend acquires after close = %d, want 0", got)
+	}
+	if got := len(muxBackend.sessions); got != 0 {
+		t.Fatalf("sessions after closed acquire = %d, want 0", got)
+	}
+}
+
+func TestQUICMuxAcquireRacingCloseInvalidatesRaw(t *testing.T) {
+	raw := &muxLifecycleSession{receive: make(chan []byte)}
+	backend := &blockedMuxLifecycleBackend{raw: raw, entered: make(chan struct{}), release: make(chan struct{})}
+	muxBackend := &quicMuxBackend{
+		backend:          backend,
+		auth:             func(context.Context, carrier.QuicSession) (wire.AuthFrame, error) { return wire.AuthFrame{1}, nil },
+		maxUDPQueueBytes: 64,
+		maxPendingCloses: 4,
+		sessions:         make(map[carrier.QuicSession]*quicSessionMux),
+	}
+
+	acquired := make(chan error, 1)
+	go func() {
+		_, err := muxBackend.AcquireSession(context.Background())
+		acquired <- err
+	}()
+	select {
+	case <-backend.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("acquire never reached the host backend")
+	}
+	if err := muxBackend.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The session handed out after the gate closed is invalidated, not retained.
+	close(backend.release)
+	select {
+	case err := <-acquired:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("AcquireSession racing Close = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("acquire did not observe the drain token")
 	}
 	if got := backend.invalidations.Load(); got != 1 {
 		t.Fatalf("backend invalidations = %d, want 1", got)
 	}
 	if got := len(muxBackend.sessions); got != 0 {
-		t.Fatalf("sessions after closed acquire = %d, want 0", got)
+		t.Fatalf("sessions after racing acquire = %d, want 0", got)
 	}
 }
 
@@ -207,6 +251,162 @@ func TestAbandonedPreparedQUICDatagramsDoNotQueueClose(t *testing.T) {
 	}
 }
 
+func TestCancelledUDPSetupRemovesTentativeRoute(t *testing.T) {
+	session := newTestQUICSessionMux(t, 64, 4)
+	prep := &quicPreparedStream{session: session, id: 7}
+	prepared, err := prepareQUICDatagrams(prep, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] == nil {
+		t.Fatal("flow was not registered during preparation")
+	}
+
+	// The setup is cancelled before the FlowHeader is committed, so the
+	// tentative registration is released (upstream 6ebfebb).
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != nil {
+		t.Fatal("cancelled UDP setup left a tentative route behind")
+	}
+}
+
+func TestStaleUDPSetupDoesNotRemoveReusedFlowID(t *testing.T) {
+	session := newTestQUICSessionMux(t, 64, 4)
+	stalePrep := &quicPreparedStream{session: session, id: 7}
+	stale, err := prepareQUICDatagrams(stalePrep, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleFlow := stale.flow
+	if err := stale.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later attempt takes the same flow id over.
+	current, err := prepareQUICDatagrams(&quicPreparedStream{session: session, id: 7}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != current.flow {
+		t.Fatal("reused flow id was not registered")
+	}
+
+	// The abandoned attempt finishes late; it must not drop the live route.
+	session.unregister(7, staleFlow, net.ErrClosed)
+	if session.flows[7] != current.flow {
+		t.Fatal("stale UDP setup removed the reused flow id")
+	}
+
+	if err := current.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != nil {
+		t.Fatal("current registration was not removed")
+	}
+}
+
+func TestCommittedUDPSetupOutlivesSetupGuard(t *testing.T) {
+	session := newTestQUICSessionMux(t, 64, 4)
+	prep := &quicPreparedStream{session: session, id: 7}
+	prepared, err := prepareQUICDatagrams(prep, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := prepared.Activate()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A late abandon on the setup guard must not drop the committed route.
+	if err := prepared.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != handle.flow {
+		t.Fatal("committed UDP route was dropped by its setup guard")
+	}
+	if !handle.flow.ready() {
+		t.Fatal("committed UDP route is not READY")
+	}
+
+	if err := handle.closePacket(); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != nil {
+		t.Fatal("closed UDP route was not removed")
+	}
+}
+
+// pipePreparedStream commits setup bytes onto a pipe whose peer never answers
+// with a SetupResult, which is how a stalled or cancelled Portal dial looks.
+type pipePreparedStream struct {
+	conn net.Conn
+}
+
+func (p *pipePreparedStream) Commit(_ context.Context, setup []byte, _ bool) (net.Conn, error) {
+	if _, err := p.conn.Write(setup); err != nil {
+		return nil, err
+	}
+	return p.conn, nil
+}
+
+func (p *pipePreparedStream) Close() error { return p.conn.Close() }
+
+func TestCancelledUDPCommitReleasesTentativeRoute(t *testing.T) {
+	session := newTestQUICSessionMux(t, 64, 4)
+	server, client := net.Pipe()
+	// The peer reads the opening setup and then abandons the control stream,
+	// so the client observes a failed setup instead of READY.
+	aborted := make(chan struct{})
+	go func() {
+		defer close(aborted)
+		buf := make([]byte, 4096)
+		if _, err := server.Read(buf); err != nil {
+			return
+		}
+		_ = server.Close()
+	}()
+	defer func() {
+		<-aborted
+	}()
+	prep := &quicPreparedStream{
+		session: session,
+		stream:  &pipePreparedStream{conn: client},
+		id:      7,
+	}
+	lanes := &preparedLanes{up: &physicalLane{carrier: wire.CarrierQUIC, quic: prep}}
+	route := resolvedRoute{uplink: wire.CarrierQUIC, downlink: wire.CarrierQUIC}
+	if err := lanes.prepareUDPDownlink(wire.FlowKindUDP, route, 7); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] == nil {
+		t.Fatal("flow was not registered during preparation")
+	}
+
+	// The peer abandons the control stream before answering, so the commit
+	// fails and the caller releases the prepared lanes.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	target, err := wire.NewDomainTarget("example.com", 53)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &CarrierBundle{}
+	if _, err := b.commitUDPRoute(ctx, lanes, route, 7, target, 0); err == nil {
+		t.Fatal("commitUDPRoute succeeded without a SetupResult")
+	}
+	if err := lanes.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if session.flows[7] != nil {
+		t.Fatal("cancelled UDP commit left a tentative route behind")
+	}
+	if got := len(session.closeQueue); got != 0 {
+		t.Fatalf("cancelled UDP commit queued %d CLOSE frames", got)
+	}
+}
+
 func TestQUICMuxFragmentReservationReleasedOnShutdown(t *testing.T) {
 	session := newTestQUICSessionMux(t, 64, 4)
 	flow, err := session.register(1)
@@ -324,10 +524,12 @@ func newTestQUICSessionMux(t *testing.T, budget, closeLimit int) *quicSessionMux
 
 type muxLifecycleBackend struct {
 	invalidations atomic.Int32
+	acquires      atomic.Int32
 	acquire       func(context.Context) (carrier.QuicSession, error)
 }
 
 func (b *muxLifecycleBackend) AcquireSession(ctx context.Context) (carrier.QuicSession, error) {
+	b.acquires.Add(1)
 	if b.acquire != nil {
 		return b.acquire(ctx)
 	}
@@ -337,6 +539,26 @@ func (b *muxLifecycleBackend) InvalidateSession(carrier.QuicSession) {
 	b.invalidations.Add(1)
 }
 func (*muxLifecycleBackend) Close() error { return nil }
+
+// blockedMuxLifecycleBackend parks an acquire until release closes, which is
+// how a test drives a close that races an in-flight acquire.
+type blockedMuxLifecycleBackend struct {
+	muxLifecycleBackend
+	raw     *muxLifecycleSession
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (b *blockedMuxLifecycleBackend) AcquireSession(ctx context.Context) (carrier.QuicSession, error) {
+	b.once.Do(func() { close(b.entered) })
+	select {
+	case <-b.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return b.raw, nil
+}
 
 type muxLifecycleSession struct {
 	receive chan []byte

@@ -27,13 +27,13 @@ func TestInboundChainedPortalCarrierMatrices(t *testing.T) {
 	keyPair, certPEM, keyPEM := chainTestKeyPair(t)
 	echoAddr := startChainTestEcho(t)
 	directOriginPort := startChainTestOrigin(t, keyPair, "")
-	matrixOriginPort := startChainTestMatrixRelay(t, certPEM, keyPEM, "matrix-origin-key", directOriginPort, "origin-key", "tcp", "tcp")
+	matrixOriginPort := startChainTestMatrixRelay(t, certPEM, keyPEM, testMatrixOriginKey, directOriginPort, testOriginKey, "tcp", "tcp")
 
 	matrices := [][2]string{{"tcp", "tcp"}, {"udp", "udp"}, {"tcp", "udp"}, {"udp", "tcp"}}
 	for _, nextMatrix := range matrices {
 		nextUp, nextDown := nextMatrix[0], nextMatrix[1]
 		t.Run("next-"+nextUp+"/"+nextDown, func(t *testing.T) {
-			relayPort := startChainTestMatrixRelay(t, certPEM, keyPEM, "matrix-relay-key", matrixOriginPort, "matrix-origin-key", nextUp, nextDown)
+			relayPort := startChainTestMatrixRelay(t, certPEM, keyPEM, testMatrixRelayKey, matrixOriginPort, testMatrixOriginKey, nextUp, nextDown)
 			for _, clientMatrix := range matrices {
 				up, down := clientMatrix[0], clientMatrix[1]
 				t.Run(up+"/"+down, func(t *testing.T) {
@@ -83,7 +83,7 @@ func startChainTestMatrixClient(t *testing.T, serverPort uint16, up, down string
 	t.Helper()
 	client, err := NewOutbound(context.Background(), nil, log.NewNOPFactory().Logger(), "matrix-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: serverPort},
-		Password:      "matrix-relay-key",
+		Password:      testMatrixRelayKey,
 		Up:            up,
 		Down:          down,
 		Pool:          common.Ptr(0),

@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
@@ -12,11 +13,15 @@ import (
 
 // Stream is one reconstructed Mux logical stream. It implements net.Conn.
 type Stream struct {
-	shared  *shared
-	flowID  uint32
-	local   net.Addr
-	remote  net.Addr
-	inbound <-chan inbound
+	shared *shared
+	flowID uint32
+	// generation fences this handle against a reused flow ID (upstream
+	// b4482fe). Captured when the flow state was reserved.
+	generation uint64
+	reset      *atomic.Bool
+	local      net.Addr
+	remote     net.Addr
+	inbound    <-chan inbound
 
 	readMu        sync.Mutex
 	current       []byte
@@ -36,15 +41,17 @@ type Stream struct {
 	terminalSent bool
 }
 
-func newStream(s *shared, flowID uint32, inbound <-chan inbound) *Stream {
+func newStream(s *shared, flowID uint32, flow *flowState) *Stream {
 	return &Stream{
-		shared:    s,
-		flowID:    flowID,
-		local:     s.local,
-		remote:    s.remote,
-		inbound:   inbound,
-		readWait:  make(chan struct{}),
-		writeWait: make(chan struct{}),
+		shared:     s,
+		flowID:     flowID,
+		generation: flow.generation,
+		reset:      flow.reset,
+		local:      s.local,
+		remote:     s.remote,
+		inbound:    flow.inbound,
+		readWait:   make(chan struct{}),
+		writeWait:  make(chan struct{}),
 	}
 }
 
@@ -61,12 +68,21 @@ func (st *Stream) Read(p []byte) (int, error) {
 		return 0, nil
 	}
 	for {
+		if st.reset.Load() {
+			// Flow termination discards buffered DATA and returns its
+			// connection credit once before failing the reader.
+			st.discardBuffered()
+			st.readMu.Lock()
+			st.eof = true
+			st.readMu.Unlock()
+			return 0, errReset
+		}
 		st.readMu.Lock()
 		if len(st.current) > st.currentOff {
 			n := copy(p, st.current[st.currentOff:])
 			st.currentOff += n
 			if st.currentOff == len(st.current) {
-				st.shared.releaseReceive(st.flowID, st.currentCharge)
+				st.shared.releaseReceive(st.flowID, st.generation, st.currentCharge)
 				st.current = nil
 				st.currentCharge = 0
 				st.currentOff = 0
@@ -96,7 +112,7 @@ func (st *Stream) Read(p []byte) (int, error) {
 		st.ctrlMu.Unlock()
 		if closed {
 			if msg.kind == inboundData {
-				st.shared.releaseReceive(st.flowID, msg.charge)
+				st.shared.releaseReceive(st.flowID, st.generation, msg.charge)
 			}
 			return 0, errClosed
 		}
@@ -112,11 +128,38 @@ func (st *Stream) Read(p []byte) (int, error) {
 			st.readMu.Unlock()
 			return 0, io.EOF
 		case inboundReset:
-			st.eof = true
+			// The reset marker only wakes the reader; the loop top sees
+			// the flag, discards buffered payloads, and fails.
 			st.readMu.Unlock()
-			return 0, errReset
 		default:
 			st.readMu.Unlock()
+		}
+	}
+}
+
+// discardBuffered releases every DATA payload this stream still holds or has
+// queued. Receive credit only returns to the connection window: the flow is
+// gone, so its stream window is never replenished.
+func (st *Stream) discardBuffered() {
+	st.readMu.Lock()
+	if st.current != nil {
+		st.shared.releaseReceive(st.flowID, st.generation, st.currentCharge)
+		st.current = nil
+		st.currentCharge = 0
+		st.currentOff = 0
+	}
+	st.readMu.Unlock()
+	for {
+		select {
+		case msg, ok := <-st.inbound:
+			if !ok {
+				return
+			}
+			if msg.kind == inboundData {
+				st.shared.releaseReceive(st.flowID, st.generation, msg.charge)
+			}
+		default:
+			return
 		}
 	}
 }
@@ -243,14 +286,20 @@ func (st *Stream) CloseWrite() error {
 	if st.terminalSent {
 		return nil
 	}
+	if !st.shared.isCurrentFlow(st.flowID, st.generation) {
+		// The flow was terminated (peer RESET or reuse); a FIN would write
+		// into a different generation.
+		st.terminalSent = true
+		return errClosed
+	}
 	st.terminalSent = true
 	header, err := wire.FinMuxHeader(st.flowID)
 	if err != nil {
-		st.shared.releasePart(st.flowID)
+		st.shared.releasePart(st.flowID, st.generation)
 		return err
 	}
-	sendErr := st.shared.sendOutbound(outbound{header: header}, nil)
-	st.shared.releasePart(st.flowID)
+	sendErr := st.shared.sendOutbound(outbound{header: header, generation: st.generation}, nil)
+	st.shared.releasePart(st.flowID, st.generation)
 	return sendErr
 }
 
@@ -274,7 +323,7 @@ func (st *Stream) closeReader() {
 	st.readMu.Lock()
 	defer st.readMu.Unlock()
 	if st.current != nil {
-		st.shared.releaseReceive(st.flowID, st.currentCharge)
+		st.shared.releaseReceive(st.flowID, st.generation, st.currentCharge)
 		st.current = nil
 		st.currentCharge = 0
 	}
@@ -282,14 +331,14 @@ func (st *Stream) closeReader() {
 		select {
 		case msg, ok := <-st.inbound:
 			if !ok {
-				st.shared.releasePart(st.flowID)
+				st.shared.releasePart(st.flowID, st.generation)
 				return
 			}
 			if msg.kind == inboundData {
-				st.shared.releaseReceive(st.flowID, msg.charge)
+				st.shared.releaseReceive(st.flowID, st.generation, msg.charge)
 			}
 		default:
-			st.shared.releasePart(st.flowID)
+			st.shared.releasePart(st.flowID, st.generation)
 			return
 		}
 	}

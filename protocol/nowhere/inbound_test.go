@@ -20,7 +20,7 @@ func TestNewInboundRejectsUnknownQUICCongestionControlForTCPOnly(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	_, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password:              "secret",
+		Password:              testPortalKey,
 		QUICCongestionControl: "BBR",
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true},

@@ -11,7 +11,7 @@ icon: material/new-box
 
   ... // Listen Fields
 
-  "password": "secret",
+  "password": "0123456789abcdef0123456789abcdef",
   "morph": false,
   "network": [
     "tcp",
@@ -22,7 +22,7 @@ icon: material/new-box
   "next": {
     "server": "origin.example",
     "server_port": 2080,
-    "password": "origin-key",
+    "password": "0123456789abcdef0123456789abcde0",
     "up": "tcp",
     "down": "tcp",
     "pool": 5,
@@ -41,17 +41,16 @@ Portal via `next`).
 
 Plaintext inbound is not allowed. TLS must be enabled.
 
-This is a Nowhere 2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
+This is a Nowhere 2.2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
 only and does not interoperate with legacy 1.8 peers. Authentication is an
 exporter-bound AuthFrame, the FlowHeader is 5 bytes and carries a HOPS
 forwarding budget of 0..7, and QUIC UDP headers are packed. After AuthFrame,
 inbound TLS auto-detects dedicated lanes (`mux=0`) versus credit-windowed
-marked Mux shards (`mux=1`), and `mix` remains a
-client-side policy resolving to TT / TQ / QT / QQ.
+marked Mux shards (`mux=1`).
 
 `morph` enables the Nowhere 2 Morph keyed transform for every carrier of this
 endpoint. Morph is not negotiated in-band: `morph=1` must be enabled on both
-ends of a hop, because the Nowhere 2.1 Morph transform is wire-incompatible
+ends of a hop, because the Nowhere 2.2.1 Morph transform is wire-incompatible
 with the 2.0.x Morph.
 
 ### Listen Fields
@@ -66,6 +65,13 @@ See [Listen Fields](/configuration/shared/listen/) for details.
 
 Shared key used to derive auth material. Must match the outbound `password`.
 
+As a Portal this endpoint applies the Nowhere 2.2.1 key admission rule: after
+URL percent-decoding the key must be 32–64 lowercase hexadecimal characters
+(`[0-9a-f]{32,64}`, odd lengths accepted). The key text is used directly as the
+HKDF input; it is never hex-decoded. Generate one with
+`nowhere generate-key`. Client-side (outbound) keys stay lenient at 1–255
+decoded bytes.
+
 #### morph
 
 Enable the Nowhere 2 Morph keyed transform for every carrier of this Portal:
@@ -73,10 +79,15 @@ a 64-byte random TCP prelude is consumed below TLS before authentication, and
 directional ChaCha20 keys derived from the shared key unwrap traffic below
 both TLS and QUIC. Default: `false`.
 
+The TCP prelude policy is `full8` by default (all eight bits of each prelude
+byte are random). Set the `NOW_MORPH_TCP_PRELUDE` environment variable to
+`low7` for the older policy that clears each byte's high bit; a set-but-empty
+value is rejected. Both ends of a hop must use the same policy.
+
 There is no in-band negotiation: `morph` must match the client. For a chained
 Portal, each hop inherits this setting unless `next.morph` overrides it. The
-Nowhere 2.1 Morph transform is wire-incompatible with the 2.0.x Morph, so
-every peer on a `morph=1` hop must run Nowhere 2.1.
+Nowhere 2.2.1 Morph transform is wire-incompatible with the 2.0.x Morph, so
+every peer on a `morph=1` hop must run Nowhere 2.2.1.
 
 #### network
 
@@ -144,14 +155,23 @@ omitted, flows are routed normally.
 | --- | --- | --- |
 | `server` | ==Required== | Next Portal address. |
 | `server_port` | ==Required== | Next Portal port. |
-| `password` | ==Required== | Shared key of the next Portal. |
-| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp`, `udp`, or `mix`); both must be set, or both omitted. `mix` is a client-side policy. Any matrix that can select `udp`/`mix` requires build tag `with_quic`. |
+| `password` | ==Required== | Shared key of the next Portal. Subject to the same Portal key rule as the inbound `password`: 32–64 lowercase hexadecimal characters after URL percent-decoding. |
+| `up`, `down` | `udp` / `udp` | Carrier selectors toward the next Portal (`tcp` or `udp`); both must be set, or both omitted. Any matrix that can select `udp` requires build tag `with_quic`. |
 | `mux` | `0` | `0` dedicated TLS lanes, `1` credit-windowed TLS Mux when TCP is possible. `udp/udp&mux=1` canonicalizes to `0`. |
 | `pool` | `5` for dedicated `tcp` / `tcp`, otherwise `0` | TLS/TCP warm pool toward the next Portal. Values above `256` are clamped to `256`; `mux=1` and QUIC-capable matrices ignore `pool`. |
-| `mix_fallback_timeout` | `1s` | Primary mix-route preparation budget. |
 | `server_name` | none | DNS name used to verify the next Portal's TLS certificate. Omitted, empty, or the literal `"none"` disables certificate verification; the endpoint host may still be sent as the ClientHello SNI. |
 | `pin` | none | SHA-256 hex fingerprint of the next Portal's leaf certificate. Omitted, empty, or `"none"` disables pinning; a real pin overrides `server_name` and chain verification. |
 | `morph` | inherit inbound `morph` | Enable the Nowhere 2 Morph keyed transform toward the next Portal. Omitted (`nil`) inherits the inbound `morph`; set `true` / `false` to override the hop. Both ends of the hop must agree. |
+| `dial4` | `auto` | IPv4 source address bound when dialing the next Portal over IPv4. Accepts `auto` (leave the source address to the system) or an IPv4 literal; `0.0.0.0` is a valid wildcard. |
+| `dial6` | `auto` | IPv6 source address bound when dialing the next Portal over IPv6. Accepts `auto` or an IPv6 literal; IPv4-mapped literals such as `::ffff:192.0.2.1` are rejected and `::` is a valid wildcard. |
+
+`dial4` and `dial6` are independent and may be combined for dual-stack source
+binding. They mirror the Rust portal URL parameters `dial4` / `dial6` and are
+mutually exclusive with `dial`: this build has no `dial` option for the next
+hop, and the equivalent legacy single-family binding on an outbound is the
+shared `inet4_bind_address` / `inet6_bind_address` dial field. A configured
+bind is never silently downgraded to automatic — a failed bind fails the
+dial and the next candidate is tried.
 
 The chained upstream client inherits the inbound TLS ALPN.
 
@@ -159,7 +179,7 @@ Hop budget: the first forwarding Portal initializes HOPS to 7, each
 Portal-to-Portal hop decrements it by one, and a Portal that would forward an
 exhausted flow (HOPS=1) rejects it with `FLOW_LIMIT` before opening the next
 hop. Setup rejection codes from an upstream Portal propagate downstream
-unchanged. Every Portal in a chain must run Nowhere 2.1 (`nw2`).
+unchanged. Every Portal in a chain must run Nowhere 2.2.1 (`nw2`).
 
 ### QUIC Fields
 

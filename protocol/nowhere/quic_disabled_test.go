@@ -40,7 +40,7 @@ func TestQUICDisabledAllowsTCPOnlyInbound(t *testing.T) {
 		t.Fatal(err)
 	}
 	inbound, err := NewInbound(context.Background(), nil, log.NewNOPFactory().Logger(), "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
@@ -56,7 +56,7 @@ func TestQUICDisabledAllowsTCPOnlyInbound(t *testing.T) {
 
 func TestQUICDisabledRejectsUDPInbound(t *testing.T) {
 	_, err := NewInbound(context.Background(), nil, log.NewNOPFactory().Logger(), "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkUDP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true},

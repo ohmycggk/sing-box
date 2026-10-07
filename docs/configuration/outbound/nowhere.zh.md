@@ -11,7 +11,7 @@ icon: material/new-box
 
   "server": "example.com",
   "server_port": 2077,
-  "password": "secret",
+  "password": "0123456789abcdef0123456789abcdef",
   "up": "udp",
   "down": "udp",
   "morph": false,
@@ -27,13 +27,13 @@ icon: material/new-box
 Nowhere 出站是 SingBox 的 Nowhere 客户端。上传与下载 carrier 通过 `up` /
 `down` 独立选择。
 
-这是 Nowhere 2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
+这是 Nowhere 2.2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
 认证使用绑定 TLS exporter 的 AuthFrame；FlowHeader 为 5 字节，携带 0..7 的
 HOPS 转发预算；TLS Mux 基于信用窗口（`mux=0` 专用通道，`mux=1` 标记分片）；
-QUIC UDP 头为打包格式；`mix` 仍是客户端策略，解析为 TT / TQ / QT / QQ。
+QUIC UDP 头为打包格式。
 
 `morph` 为本端点的所有 carrier 启用 Nowhere 2 Morph 密钥变换。Morph 不会在
-带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.1 的 Morph 变换与
+带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.2.1 的 Morph 变换与
 2.0.x Morph 线级不兼容。
 
 ### 字段
@@ -56,14 +56,15 @@ QUIC UDP 头为打包格式；`mix` 仍是客户端策略，解析为 TT / TQ / 
 
 共享密钥，必须与入站 `password` 一致。
 
+作为客户端，本端点保持宽松：密钥接受 URL 百分号解码后 1–255 字节，不限制字符。
+Portal 侧更严格——解码后 32–64 个 lowercase 十六进制字符，参阅
+[Nowhere 入站](/zh/configuration/inbound/nowhere/) 的 `password` 字段。
+
 #### up, down
 
-Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
+Carrier 选择：`"tcp"` 或 `"udp"`。
 
 必须同时设置，或同时省略（默认 `udp` / `udp`）。
-`mix` 是客户端策略，在写入 FlowHeader 之前按 flow 解析。
-`mix/mix` 只会解析为 `tcp/tcp` 或 `udp/udp`；单边 `mix` 可以解析为非对称对。
-主路由有 1s 准备预算，超时后用新 flow ID 尝试另一条允许的载体对。
 
 | 矩阵 | TCP 流量 | UDP 流量 | 说明 |
 | --- | --- | --- | --- |
@@ -71,9 +72,8 @@ Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
 | `udp` / `udp` | 一条 QUIC stream | QUIC DATAGRAM | 需要 `with_quic`。`mux=1` 会规范为 `0`。 |
 | `tcp` / `udp` | TLS 上传 + QUIC 下载 | UoT 上传 + DATAGRAM 下载 | 非对称；需要 `with_quic`。 |
 | `udp` / `tcp` | QUIC 上传 + TLS 下载 | DATAGRAM 上传 + UoT 下载 | 非对称；需要 `with_quic`。 |
-| `mix` / `mix` | 按 flow 选择 `tcp/tcp` 或 `udp/udp` | 与解析结果相同 | 客户端策略；需要 `with_quic`。 |
 
-任何可能选择 QUIC（`udp` 或 `mix`）的矩阵都会强制 `pool=0`。显式配置非零值时
+任何可能选择 QUIC（`udp`）的矩阵都会强制 `pool=0`。显式配置非零值时
 会归一化为零，并记录一次配置警告。
 
 无 `with_quic` 时只能构造 `tcp` / `tcp`；其它矩阵返回
@@ -82,11 +82,7 @@ Carrier 选择：`"tcp"`、`"udp"` 或 `"mix"`。
 #### mux
 
 TLS 通道成帧。`0`（默认）使用专用 TLS 通道；`1` 启用 Mux 分片。任一方向为 `tcp`
-或 `mix` 时生效；`udp/udp&mux=1` 会规范为 `0`。
-
-#### mix_fallback_timeout
-
-mix 主路由准备超时。省略或 `0` 使用 `1s`。
+时生效；`udp/udp&mux=1` 会规范为 `0`。
 
 #### pool
 
@@ -104,9 +100,13 @@ TCP/UoT flow 仍会消耗一条独立 TLS/TCP carrier。
 之前，会在 TLS 之下先发送一个 64 字节随机 TCP prelude；TLS 与 QUIC 之下都会
 使用由共享密钥派生的方向性 ChaCha20 密钥。默认：`false`。
 
+TCP prelude 策略默认为 `full8`（每个 prelude 字节的 8 位全部随机）。可将环境
+变量 `NOW_MORPH_TCP_PRELUDE` 设为 `low7` 以沿用旧策略（清除每个字节的高位）；
+设置为空串会被拒绝。跳的两端必须使用相同策略。
+
 Morph 不会在带内协商。跳的两端（客户端与 Portal，或 Portal 与下一跳 Portal）
-必须同时启用 `morph`；且 Nowhere 2.1 的 Morph 变换与 2.0.x Morph 线级不兼容，
-因此 `morph=1` 跳上的所有对端都必须运行 Nowhere 2.1。
+必须同时启用 `morph`；且 Nowhere 2.2.1 的 Morph 变换与 2.0.x Morph 线级不兼容，
+因此 `morph=1` 跳上的所有对端都必须运行 Nowhere 2.2.1。
 
 #### max_concurrent_dials
 
@@ -143,6 +143,11 @@ QUIC/UDP carrier，不提供带宽限速；入站和出站可以使用不同的�
 ### 拨号字段
 
 参阅 [拨号字段](/zh/configuration/shared/dial/)。
+
+共享的 `inet4_bind_address` / `inet6_bind_address` 字段按协议族为本出站绑定源
+地址，它们是 Rust `dial` 参数的 sing-box 等价形式，并与 Rust 的 `dial4` /
+`dial6` 组合互斥；本构建只在入站 `next` 跳上暴露 `dial4` / `dial6`，参阅
+[Nowhere 入站](/zh/configuration/inbound/nowhere/#next)。
 
 ### QUIC 字段
 

@@ -10,7 +10,7 @@ import (
 
 const initialTCPPayloadCoalesceLimit = 64 * 1024
 
-// OpenTCP opens a TCP logical flow using the configured carrier matrix.
+// OpenTCP opens a TCP logical flow using the configured up/down carriers.
 func (b *CarrierBundle) OpenTCP(ctx context.Context, target wire.Target) (net.Conn, error) {
 	return b.openTCP(ctx, target, nil, 0)
 }
@@ -46,9 +46,7 @@ func (b *CarrierBundle) openTCP(ctx context.Context, target wire.Target, payload
 		conn net.Conn
 		err  error
 	)
-	if b.mixEnabled() {
-		conn, err = b.openMixTCP(ctx, target, prefix, hops)
-	} else if b.cfg.up != b.cfg.down {
+	if b.cfg.up != b.cfg.down {
 		conn, err = b.openAsymmetricTCP(ctx, target, prefix, hops)
 	} else {
 		switch b.cfg.up {
@@ -72,7 +70,7 @@ func (b *CarrierBundle) openTCP(ctx context.Context, target wire.Target, payload
 	return conn, nil
 }
 
-// OpenUDP opens a UDP logical flow using the configured carrier matrix.
+// OpenUDP opens a UDP logical flow using the configured carrier route.
 func (b *CarrierBundle) OpenUDP(ctx context.Context, target wire.Target) (net.PacketConn, error) {
 	return b.openUDP(ctx, target, 0)
 }
@@ -91,7 +89,7 @@ func (b *CarrierBundle) openUDP(ctx context.Context, target wire.Target, hops ui
 	if hops > wire.MaxPortalHops {
 		return nil, errors.New("nowhere: portal hop budget exceeds 7")
 	}
-	return b.openMixUDP(ctx, target, hops)
+	return b.openUDPRoute(ctx, target, hops)
 }
 
 func (b *CarrierBundle) openSymmetricTCPTCP(ctx context.Context, target wire.Target, payloadPrefix []byte, hops uint8) (net.Conn, error) {

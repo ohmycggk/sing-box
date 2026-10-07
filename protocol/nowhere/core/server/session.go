@@ -165,13 +165,58 @@ func (m *sessionManager) BeginDrain() {
 	m.mu.Unlock()
 }
 
-// portalSession is one authenticated QUIC connection (via QuicConn).
+// pendingUDPControl is one QUIC UDP control stream that registered itself
+// before its flow was activated.
+//
+// A registration is tentative from beginPendingUDPControl until the flow is
+// activated. generation identifies the setup attempt, so a guard whose setup
+// was cancelled or timed out never removes an entry that a later attempt for
+// the same flow id has taken over.
 type pendingUDPControl struct {
-	created time.Time
-	frames  []wire.UDPFrame
-	bytes   int
+	created    time.Time
+	frames     []wire.UDPFrame
+	bytes      int
+	generation uint64
 }
 
+// pendingUDPGuard owns one tentative pendingUDPControl registration. commit
+// hands the registration to the live flow and disarms the guard; every other
+// outcome (cancelled setup, setup failure, dropped control stream) leaves it
+// armed so the deferred cancel removes the registration again.
+type pendingUDPGuard struct {
+	session *portalSession
+	flowID  wire.FlowID
+	control *pendingUDPControl
+	armed   bool
+}
+
+// commit transfers ownership of the registration to the activated flow.
+func (g *pendingUDPGuard) commit() {
+	if g == nil || !g.armed {
+		return
+	}
+	g.armed = false
+}
+
+// cancel drops a registration that never committed. Guards are one-shot, and
+// removal only applies while the flow id still belongs to this attempt.
+func (g *pendingUDPGuard) cancel() {
+	if g == nil || !g.armed {
+		return
+	}
+	g.armed = false
+	g.session.removePendingControl(g.flowID, g.control)
+}
+
+// pending exposes the registration for the activation path.
+func (g *pendingUDPGuard) pending() *pendingUDPControl {
+	if g == nil || !g.armed {
+		return nil
+	}
+	return g.control
+}
+
+// portalSession is one authenticated QUIC connection (via QuicConn).
 type portalSession struct {
 	ID         wire.SessionID
 	Generation uint64
@@ -184,17 +229,19 @@ type portalSession struct {
 	mu              sync.Mutex
 	flows           map[wire.FlowID]*nowuFlow
 	pendingControls map[wire.FlowID]*pendingUDPControl
-	pendingFrames   int
-	pendingBytes    int
-	queuedBytes     int
-	budget          *byteBudget
-	prober          *carrierquic.DatagramProber
-	reassembler     *udpReassembler
-	expiryCancel    context.CancelFunc
-	expiryDone      chan struct{}
-	closeDone       chan struct{}
-	closed          bool
-	transportOnce   sync.Once
+	// controlSeq mints the generation of each pending UDP control attempt.
+	controlSeq    atomic.Uint64
+	pendingFrames int
+	pendingBytes  int
+	queuedBytes   int
+	budget        *byteBudget
+	prober        *carrierquic.DatagramProber
+	reassembler   *udpReassembler
+	expiryCancel  context.CancelFunc
+	expiryDone    chan struct{}
+	closeDone     chan struct{}
+	closed        bool
+	transportOnce sync.Once
 
 	dropMu        sync.Mutex
 	dropCount     int
@@ -470,7 +517,7 @@ func (s *portalSession) removeFlow(id wire.FlowID, flow *nowuFlow) {
 	s.mu.Unlock()
 }
 
-func (s *portalSession) beginPendingUDPControl(header wire.FlowHeader) (*pendingUDPControl, error) {
+func (s *portalSession) beginPendingUDPControl(header wire.FlowHeader) (*pendingUDPGuard, error) {
 	if err := validateFlowTransport(header, wire.CarrierQUIC); err != nil {
 		return nil, err
 	}
@@ -496,20 +543,15 @@ func (s *portalSession) beginPendingUDPControl(header wire.FlowHeader) (*pending
 	if len(s.pendingControls) >= preactivationControlLimit {
 		return nil, ErrPairLimit
 	}
-	pending := &pendingUDPControl{created: now}
+	pending := &pendingUDPControl{created: now, generation: s.controlSeq.Add(1)}
 	s.pendingControls[header.FlowID] = pending
-	return pending, nil
+	return &pendingUDPGuard{session: s, flowID: header.FlowID, control: pending, armed: true}, nil
 }
 
-func (s *portalSession) cancelPendingUDPControl(flowID wire.FlowID, pending *pendingUDPControl) {
-	if pending == nil {
-		return
-	}
+func (s *portalSession) removePendingControl(flowID wire.FlowID, pending *pendingUDPControl) {
 	s.mu.Lock()
-	if s.pendingControls[flowID] == pending {
-		s.removePendingControlLocked(flowID, pending)
-	}
-	s.mu.Unlock()
+	defer s.mu.Unlock()
+	s.removePendingControlLocked(flowID, pending)
 }
 
 func (s *portalSession) expirePendingControls(now time.Time) {
@@ -526,8 +568,15 @@ func (s *portalSession) expirePendingControlsLocked(now time.Time) {
 	}
 }
 
+// ownsPendingControlLocked reports whether flowID still maps to this setup
+// attempt. The generation, not the flow id alone, decides ownership.
+func (s *portalSession) ownsPendingControlLocked(flowID wire.FlowID, pending *pendingUDPControl) bool {
+	current := s.pendingControls[flowID]
+	return current != nil && pending != nil && current.generation == pending.generation
+}
+
 func (s *portalSession) removePendingControlLocked(flowID wire.FlowID, pending *pendingUDPControl) {
-	if s.pendingControls[flowID] != pending {
+	if !s.ownsPendingControlLocked(flowID, pending) {
 		return
 	}
 	delete(s.pendingControls, flowID)
@@ -713,9 +762,9 @@ func (s *portalSession) handleStream(ctx context.Context, stream QuicStream, fir
 		s.Handler.emitQUIC(ctx, diagnostic.LevelError, "request_read_failed", source, "", s.ID, header.FlowID, err)
 		return
 	}
-	var pending *pendingUDPControl
+	var gate *pendingUDPGuard
 	if header.Kind == wire.FlowKindUDP {
-		pending, err = s.beginPendingUDPControl(header)
+		gate, err = s.beginPendingUDPControl(header)
 		if err != nil {
 			if errors.Is(err, ErrDuplicateHalf) {
 				rejectQUICControl(conn, header, setupFailureCode(err))
@@ -726,7 +775,9 @@ func (s *portalSession) handleStream(ctx context.Context, stream QuicStream, fir
 			s.Handler.emitQUIC(ctx, diagnostic.LevelError, "request_read_failed", source, targetAddress(target), s.ID, header.FlowID, err)
 			return
 		}
-		defer s.cancelPendingUDPControl(header.FlowID, pending)
+		// The guard owns the tentative registration until the flow activates;
+		// a cancelled or failed setup cancels it on the way out.
+		defer gate.cancel()
 
 		// UDP uses a dedicated control stream, so FIN is the setup boundary.
 		var trailing [1]byte
@@ -742,7 +793,7 @@ func (s *portalSession) handleStream(ctx context.Context, stream QuicStream, fir
 	_ = conn.SetDeadline(time.Time{})
 
 	if header.Kind == wire.FlowKindUDP {
-		err = s.handleUDPControl(ctx, conn, source, header, target, pending)
+		err = s.handleUDPControl(ctx, conn, source, header, target, gate)
 	} else {
 		err = s.Handler.handleFlowGeneration(ctx, conn, source, s.ID, s.Generation, true, header, target, wire.CarrierQUIC)
 	}
@@ -751,7 +802,7 @@ func (s *portalSession) handleStream(ctx context.Context, stream QuicStream, fir
 	}
 }
 
-func (s *portalSession) handleUDPControl(ctx context.Context, conn net.Conn, source net.Addr, header wire.FlowHeader, target wire.Target, pending *pendingUDPControl) error {
+func (s *portalSession) handleUDPControl(ctx context.Context, conn net.Conn, source net.Addr, header wire.FlowHeader, target wire.Target, gate *pendingUDPGuard) error {
 	if err := validateFlowTransport(header, wire.CarrierQUIC); err != nil {
 		s.Handler.rejectFlowSetupGeneration(conn, s.ID, s.Generation, true, header, setupFailureCode(err))
 		_ = conn.Close()
@@ -762,12 +813,14 @@ func (s *portalSession) handleUDPControl(ctx context.Context, conn net.Conn, sou
 	switch header.Role {
 	case wire.FlowRoleOpen:
 		flow := newNowuFlow(s, header.FlowID, target)
-		if err := s.activateNOWUFlow(flow, pending); err != nil {
+		if err := s.activateNOWUFlow(flow, gate.pending()); err != nil {
 			flow.shutdown(err)
 			rejectQUICControl(conn, header, setupFailureCode(err))
 			_ = conn.Close()
 			return err
 		}
+		// The flow owns the registration from here on; the guard disarms.
+		gate.commit()
 		half.Uplink = flow
 		err := s.Handler.submitAndRouteUDPGeneration(ctx, source, s.ID, s.Generation, true, header, target, half)
 		_ = conn.Close()
@@ -777,12 +830,13 @@ func (s *portalSession) handleUDPControl(ctx context.Context, conn net.Conn, sou
 		return s.Handler.submitAndRouteUDPGeneration(ctx, source, s.ID, s.Generation, true, header, target, half)
 	case wire.FlowRoleDuplex:
 		flow := newNowuFlow(s, header.FlowID, target)
-		if err := s.activateNOWUFlow(flow, pending); err != nil {
+		if err := s.activateNOWUFlow(flow, gate.pending()); err != nil {
 			flow.shutdown(err)
 			rejectQUICControl(conn, header, setupFailureCode(err))
 			_ = conn.Close()
 			return err
 		}
+		gate.commit()
 		half.Uplink = flow
 		half.Downlink = newQUICUDPDownlink(conn, s.SendDatagram, s.maxDatagramSize, s.prober, s.closeTransport)
 		return s.Handler.submitAndRouteUDPGeneration(ctx, source, s.ID, s.Generation, true, header, target, half)
@@ -814,7 +868,7 @@ func (s *portalSession) activateNOWUFlowLocked(flow *nowuFlow, pending *pendingU
 	if s.closed {
 		return nil, ErrClosed
 	}
-	if pending == nil || s.pendingControls[flow.flowID] != pending {
+	if pending == nil || !s.ownsPendingControlLocked(flow.flowID, pending) {
 		return nil, errStalePendingUDPControl
 	}
 	if s.flows[flow.flowID] != nil {

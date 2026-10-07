@@ -17,38 +17,21 @@ import (
 	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
-func TestMixPolicyMatrixCommitsTCPAndUDPDataPaths(t *testing.T) {
+func TestResolvedRouteCommitsUDPDataPaths(t *testing.T) {
+	T, Q := wire.CarrierTLSTCP, wire.CarrierQUIC
 	cases := []struct {
-		name     string
-		up, down CarrierMode
+		name  string
+		route resolvedRoute
 	}{
-		{"tcp_tcp", ModeTCP, ModeTCP},
-		{"tcp_udp", ModeTCP, ModeUDP},
-		{"tcp_mix", ModeTCP, ModeMix},
-		{"udp_tcp", ModeUDP, ModeTCP},
-		{"udp_udp", ModeUDP, ModeUDP},
-		{"udp_mix", ModeUDP, ModeMix},
-		{"mix_tcp", ModeMix, ModeTCP},
-		{"mix_udp", ModeMix, ModeUDP},
-		{"mix_mix", ModeMix, ModeMix},
+		{"tcp_tcp", resolvedRoute{T, T}},
+		{"tcp_udp", resolvedRoute{T, Q}},
+		{"udp_tcp", resolvedRoute{Q, T}},
+		{"udp_udp", resolvedRoute{Q, Q}},
 	}
 	for _, tc := range cases {
-		for _, chooseQUIC := range []bool{false, true} {
-			route := resolveWithChoice(tc.up, tc.down, chooseQUIC)
-			choice := "tcp"
-			if chooseQUIC {
-				choice = "quic"
-			}
-			for _, kind := range []wire.FlowKind{wire.FlowKindTCP, wire.FlowKindUDP} {
-				kindName := "tcp"
-				if kind == wire.FlowKindUDP {
-					kindName = "udp"
-				}
-				t.Run(fmt.Sprintf("%s/%s/%s/%s", tc.name, choice, kindName, route.label()), func(t *testing.T) {
-					testCommittedRoute(t, route, kind)
-				})
-			}
-		}
+		t.Run(tc.name+"/"+tc.route.label(), func(t *testing.T) {
+			testCommittedRoute(t, tc.route)
+		})
 	}
 }
 
@@ -59,38 +42,23 @@ func TestPolicyMatrixOpensThroughBundle(t *testing.T) {
 	}{
 		{"tcp_tcp", ModeTCP, ModeTCP},
 		{"tcp_udp", ModeTCP, ModeUDP},
-		{"tcp_mix", ModeTCP, ModeMix},
 		{"udp_tcp", ModeUDP, ModeTCP},
 		{"udp_udp", ModeUDP, ModeUDP},
-		{"udp_mix", ModeUDP, ModeMix},
-		{"mix_tcp", ModeMix, ModeTCP},
-		{"mix_udp", ModeMix, ModeUDP},
-		{"mix_mix", ModeMix, ModeMix},
 	}
 	for _, tc := range cases {
-		choices := []bool{false}
-		if tc.up.IsMix() || tc.down.IsMix() {
-			choices = append(choices, true)
-		}
-		for _, chooseQUIC := range choices {
-			choice := "tcp"
-			if chooseQUIC {
-				choice = "quic"
+		for _, kind := range []wire.FlowKind{wire.FlowKindTCP, wire.FlowKindUDP} {
+			kindName := "tcp"
+			if kind == wire.FlowKindUDP {
+				kindName = "udp"
 			}
-			for _, kind := range []wire.FlowKind{wire.FlowKindTCP, wire.FlowKindUDP} {
-				kindName := "tcp"
-				if kind == wire.FlowKindUDP {
-					kindName = "udp"
-				}
-				t.Run(fmt.Sprintf("%s/%s/%s", tc.name, choice, kindName), func(t *testing.T) {
-					testBundleOpen(t, tc.up, tc.down, chooseQUIC, kind)
-				})
-			}
+			t.Run(fmt.Sprintf("%s/%s", tc.name, kindName), func(t *testing.T) {
+				testBundleOpen(t, tc.up, tc.down, kind)
+			})
 		}
 	}
 }
 
-func testBundleOpen(t *testing.T, upMode, downMode CarrierMode, chooseQUIC bool, kind wire.FlowKind) {
+func testBundleOpen(t *testing.T, upMode, downMode CarrierMode, kind wire.FlowKind) {
 	t.Helper()
 	h := newOpenMatrixHarness()
 	credentials, err := wire.NewCredentials("matrix-secret")
@@ -101,23 +69,16 @@ func testBundleOpen(t *testing.T, upMode, downMode CarrierMode, chooseQUIC bool,
 	if err != nil {
 		t.Fatal(err)
 	}
-	up, mixUp := upMode.Selectors()
-	down, mixDown := downMode.Selectors()
+	up, down := upMode.Selectors(), downMode.Selectors()
 	backend := &matrixBackend{session: h.raw}
 	b, err := NewCarrierBundle(BundleOptions{
 		TCP: tcpConfig, QUIC: backend, Credentials: credentials,
-		Up: up, Down: down, MixUp: mixUp, MixDown: mixDown,
+		Up: up, Down: down,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.Close()
-	for seed := uint64(0); ; seed++ {
-		if splitmix64(seed^1)&1 != 0 == chooseQUIC {
-			b.cfg.routeSeed = seed
-			break
-		}
-	}
 	target, err := wire.NewDomainTarget("bundle-matrix.example", 443)
 	if err != nil {
 		t.Fatal(err)
@@ -158,7 +119,7 @@ func testBundleOpen(t *testing.T, upMode, downMode CarrierMode, chooseQUIC bool,
 			t.Fatalf("echo = %q", echo[:n])
 		}
 	}
-	want := resolveWithChoice(upMode, downMode, chooseQUIC)
+	want := resolvedRoute{uplink: up, downlink: down}
 	wantHeaders := 1
 	if want.split() {
 		wantHeaders = 2
@@ -178,11 +139,11 @@ func testBundleOpen(t *testing.T, upMode, downMode CarrierMode, chooseQUIC bool,
 	h.assertNoError(t)
 }
 
-func testCommittedRoute(t *testing.T, route resolvedRoute, kind wire.FlowKind) {
+func testCommittedRoute(t *testing.T, route resolvedRoute) {
 	t.Helper()
 	h := newMatrixHarness(t)
 	const flowID wire.FlowID = 7
-	lanes, err := h.prepare(route, flowID, kind)
+	lanes, err := h.prepare(route, flowID, wire.FlowKindUDP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,39 +156,21 @@ func testCommittedRoute(t *testing.T, route resolvedRoute, kind wire.FlowKind) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if kind == wire.FlowKindTCP {
-		conn, err := b.commitMixTCP(ctx, lanes, route, flowID, target, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer conn.Close()
-		if _, err := conn.Write([]byte("ping")); err != nil {
-			t.Fatal(err)
-		}
-		var echo [4]byte
-		if _, err := io.ReadFull(conn, echo[:]); err != nil {
-			t.Fatal(err)
-		}
-		if string(echo[:]) != "ping" {
-			t.Fatalf("echo = %q", echo[:])
-		}
-	} else {
-		packet, err := b.commitMixUDP(ctx, lanes, route, flowID, target, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer packet.Close()
-		if _, err := packet.WriteTo([]byte("ping"), nil); err != nil {
-			t.Fatal(err)
-		}
-		var echo [4]byte
-		n, _, err := packet.ReadFrom(echo[:])
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(echo[:n]) != "ping" {
-			t.Fatalf("echo = %q", echo[:n])
-		}
+	packet, err := b.commitUDPRoute(ctx, lanes, route, flowID, target, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer packet.Close()
+	if _, err := packet.WriteTo([]byte("ping"), nil); err != nil {
+		t.Fatal(err)
+	}
+	var echo [4]byte
+	n, _, err := packet.ReadFrom(echo[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(echo[:n]) != "ping" {
+		t.Fatalf("echo = %q", echo[:n])
 	}
 
 	wantHeaders := 1
@@ -246,9 +189,9 @@ func testCommittedRoute(t *testing.T, route resolvedRoute, kind wire.FlowKind) {
 		}
 	}
 	for _, header := range seen {
-		if header.FlowID != flowID || header.Kind != kind ||
+		if header.FlowID != flowID || header.Kind != wire.FlowKindUDP ||
 			header.Uplink != route.uplink || header.Downlink != route.downlink {
-			t.Fatalf("header = %+v route=%s kind=%d", header, route.label(), kind)
+			t.Fatalf("header = %+v route=%s", header, route.label())
 		}
 		if route.split() && header.Role == wire.FlowRoleDuplex {
 			t.Fatalf("split route emitted DUPLEX: %+v", header)
@@ -330,8 +273,8 @@ func newOpenMatrixHarness() *matrixHarness {
 func tcptlsConfigForMatrix(h *matrixHarness) (*tcptls.Config, error) {
 	return tcptls.NewConfig(tcptls.TCPOptions{
 		Address:   "matrix.invalid:443",
-		Dialer:    mixMatrixTCPDialer{harness: h},
-		TLSDialer: mixMatrixTLSDialer{},
+		Dialer:    harnessTCPDialer{harness: h},
+		TLSDialer: harnessTLSDialer{},
 	})
 }
 
@@ -574,9 +517,9 @@ func (r *sliceReader) Read(p []byte) (int, error) {
 
 var _ carrierquic.PreparedStream = (*matrixPreparedStream)(nil)
 
-type mixMatrixTCPDialer struct{ harness *matrixHarness }
+type harnessTCPDialer struct{ harness *matrixHarness }
 
-func (d mixMatrixTCPDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+func (d harnessTCPDialer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -595,9 +538,9 @@ func (d mixMatrixTCPDialer) DialContext(ctx context.Context, _, _ string) (net.C
 	return client, nil
 }
 
-type mixMatrixTLSDialer struct{}
+type harnessTLSDialer struct{}
 
-func (mixMatrixTLSDialer) DialTLSConn(_ context.Context, conn net.Conn) (wire.HandshakedConn, error) {
+func (harnessTLSDialer) DialTLSConn(_ context.Context, conn net.Conn) (wire.HandshakedConn, error) {
 	return wire.HandshakedConn{
 		Conn: conn,
 		TLSHandshakeInfo: wire.TLSHandshakeInfo{

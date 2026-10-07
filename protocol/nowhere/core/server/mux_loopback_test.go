@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier"
 	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
 	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
@@ -48,14 +46,6 @@ func (d loopbackTLSDialer) DialTLSConn(ctx context.Context, raw net.Conn) (wire.
 }
 
 func TestMuxEnabledBundleOpensTCPThroughPortal(t *testing.T) {
-	testMuxEnabledBundleOpensTCPThroughPortal(t, false)
-}
-
-func TestMuxEnabledMixedBundleOpensTCPThroughPortal(t *testing.T) {
-	testMuxEnabledBundleOpensTCPThroughPortal(t, true)
-}
-
-func testMuxEnabledBundleOpensTCPThroughPortal(t *testing.T, mixed bool) {
 	t.Helper()
 	certificate := muxSelfSignedCertificate(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -135,11 +125,6 @@ func testMuxEnabledBundleOpensTCPThroughPortal(t *testing.T, mixed bool) {
 		TCP: tcp, Credentials: credentials,
 		Up: wire.CarrierTLSTCP, Down: wire.CarrierTLSTCP, Mux: bundle.MuxEnabled,
 	}
-	if mixed {
-		options.Up, options.Down = 0, 0
-		options.MixUp, options.MixDown = true, true
-		options.QUIC = muxUnavailableQUICBackend{}
-	}
 	client, err := bundle.NewCarrierBundle(options)
 	if err != nil {
 		t.Fatal(err)
@@ -186,14 +171,6 @@ func testMuxEnabledBundleOpensTCPThroughPortal(t *testing.T, mixed bool) {
 		t.Fatal("ServeTCP still running after client close")
 	}
 }
-
-type muxUnavailableQUICBackend struct{}
-
-func (muxUnavailableQUICBackend) AcquireSession(context.Context) (carrier.QuicSession, error) {
-	return nil, errors.New("test QUIC unavailable")
-}
-func (muxUnavailableQUICBackend) InvalidateSession(carrier.QuicSession) {}
-func (muxUnavailableQUICBackend) Close() error                          { return nil }
 
 func muxSelfSignedCertificate(t *testing.T) tls.Certificate {
 	t.Helper()

@@ -17,10 +17,6 @@ func newSemaphore(n int) *semaphore {
 	return &semaphore{available: n}
 }
 
-func (s *semaphore) acquire(n int, stop <-chan struct{}) error {
-	return s.acquireUntil(n, stop, nil, time.Time{})
-}
-
 func (s *semaphore) acquireUntil(n int, stopA, stopB <-chan struct{}, deadline time.Time) error {
 	if n < 0 {
 		n = 0

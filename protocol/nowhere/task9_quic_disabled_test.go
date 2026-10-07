@@ -31,7 +31,7 @@ func TestQUICDisabledTCPOnlyConstruction(t *testing.T) {
 		t.Fatal(err)
 	}
 	inbound, err := NewInbound(context.Background(), nil, logger, "nw-in", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{

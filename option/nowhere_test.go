@@ -153,21 +153,50 @@ func TestNowhereNextMorphInheritAndOverride(t *testing.T) {
 	require.Contains(t, string(encoded), `"morph":false`)
 }
 
-func TestNowhereMuxMixJSON(t *testing.T) {
+func TestNowhereNextDialJSON(t *testing.T) {
+	t.Parallel()
+
+	var options NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"password":"0123456789abcdef0123456789abcdef",
+		"next":{
+			"server":"origin.example","server_port":2080,
+			"password":"0123456789abcdef0123456789abcde0",
+			"dial4":"192.0.2.10",
+			"dial6":"2001:db8::10"
+		}
+	}`), &options))
+	require.NotNil(t, options.Next)
+	require.Equal(t, "192.0.2.10", options.Next.Dial4)
+	require.Equal(t, "2001:db8::10", options.Next.Dial6)
+
+	var auto NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"password":"0123456789abcdef0123456789abcdef",
+		"next":{"server":"origin.example","server_port":2080,"password":"0123456789abcdef0123456789abcde0","dial4":"auto","dial6":"auto"}
+	}`), &auto))
+	require.Equal(t, "auto", auto.Next.Dial4)
+	require.Equal(t, "auto", auto.Next.Dial6)
+
+	encoded, err := json.Marshal(options)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"dial4":"192.0.2.10"`)
+	require.Contains(t, string(encoded), `"dial6":"2001:db8::10"`)
+}
+
+func TestNowhereMuxJSON(t *testing.T) {
 	t.Parallel()
 	var options NowhereOutboundOptions
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"server":"127.0.0.1",
 		"server_port":2077,
 		"password":"secret",
-		"up":"mix",
-		"down":"mix",
+		"up":"tcp",
+		"down":"tcp",
 		"mux":1,
-		"mix_fallback_timeout":"2s",
 		"tls":{"enabled":true,"insecure":true}
 	}`), &options))
-	require.Equal(t, "mix", options.Up)
+	require.Equal(t, "tcp", options.Up)
 	require.NotNil(t, options.Mux)
 	require.Equal(t, 1, *options.Mux)
-	require.Equal(t, 2*time.Second, options.MixFallbackTimeout.Build())
 }

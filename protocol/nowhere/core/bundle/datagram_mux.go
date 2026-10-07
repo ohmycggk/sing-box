@@ -3,6 +3,7 @@ package bundle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -32,6 +33,11 @@ const (
 
 var errManagedDatagramReceive = errors.New("nowhere: quic datagram receive is bundle managed")
 var errQUICAuthenticationAborted = errors.New("nowhere: first quic stream closed before authentication")
+
+// errQUICShuttingDown rejects acquires issued after the backend closed. It
+// wraps net.ErrClosed so callers that classify that sentinel as fatal keep
+// working (upstream 206f9c1).
+var errQUICShuttingDown = fmt.Errorf("nowhere: quic session manager shutting down: %w", net.ErrClosed)
 
 // ErrPendingCloseLimit prevents unbounded reliable CLOSE retention. Overflow
 // invalidates the physical QUIC session so the peer cannot retain leaked flows.
@@ -122,6 +128,10 @@ type quicMuxBackend struct {
 	mu       sync.Mutex
 	sessions map[carrier.QuicSession]*quicSessionMux
 	closed   bool
+	// shutdown is the drain token: once closed, acquires fail with
+	// errQUICShuttingDown instead of consuming a physical session.
+	shutdown     chan struct{}
+	shutdownOnce sync.Once
 }
 
 func newQUICMuxBackend(
@@ -142,9 +152,15 @@ func newQUICMuxBackend(
 }
 
 func (b *quicMuxBackend) AcquireSession(ctx context.Context) (carrier.QuicSession, error) {
+	if b.shuttingDown() {
+		return nil, errQUICShuttingDown
+	}
 	for {
 		raw, err := b.backend.AcquireSession(ctx)
 		if err != nil {
+			if b.shuttingDown() {
+				return nil, errQUICShuttingDown
+			}
 			return nil, err
 		}
 		if raw == nil {
@@ -155,7 +171,7 @@ func (b *quicMuxBackend) AcquireSession(ctx context.Context) (carrier.QuicSessio
 		if b.closed {
 			b.mu.Unlock()
 			b.backend.InvalidateSession(raw)
-			return nil, net.ErrClosed
+			return nil, errQUICShuttingDown
 		}
 		if session := b.sessions[raw]; session != nil {
 			if session.invalidation.Load() != quicInvalidationNone {
@@ -166,6 +182,8 @@ func (b *quicMuxBackend) AcquireSession(ctx context.Context) (carrier.QuicSessio
 					continue
 				case <-ctx.Done():
 					return nil, ctx.Err()
+				case <-b.shutdownToken():
+					return nil, errQUICShuttingDown
 				}
 			}
 			b.mu.Unlock()
@@ -220,6 +238,9 @@ func (b *quicMuxBackend) InvalidateSession(session carrier.QuicSession) {
 	<-managed.sendLoopDone
 }
 
+// Close drains every managed session: the drain token trips so later acquires
+// fail fast, the loops are joined, and the session table is cleared (upstream
+// 206f9c1).
 func (b *quicMuxBackend) Close() error {
 	b.mu.Lock()
 	if b.closed {
@@ -227,10 +248,12 @@ func (b *quicMuxBackend) Close() error {
 		return nil
 	}
 	b.closed = true
+	b.tripShutdownLocked()
 	sessions := make([]*quicSessionMux, 0, len(b.sessions))
 	for _, session := range b.sessions {
 		sessions = append(sessions, session)
 	}
+	b.sessions = make(map[carrier.QuicSession]*quicSessionMux)
 	b.mu.Unlock()
 
 	for _, session := range sessions {
@@ -245,6 +268,35 @@ func (b *quicMuxBackend) Close() error {
 		<-session.sendLoopDone
 	}
 	return err
+}
+
+// tripShutdownLocked closes the drain token. Callers hold b.mu.
+func (b *quicMuxBackend) tripShutdownLocked() {
+	b.shutdownOnce.Do(func() {
+		if b.shutdown == nil {
+			b.shutdown = make(chan struct{})
+		}
+		close(b.shutdown)
+	})
+}
+
+// shutdownToken returns the drain token, or nil when it never tripped.
+func (b *quicMuxBackend) shutdownToken() <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.shutdown
+}
+
+// shuttingDown reports whether the drain token tripped.
+func (b *quicMuxBackend) shuttingDown() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	select {
+	case <-b.shutdown:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *quicMuxBackend) remove(session *quicSessionMux) {
@@ -471,9 +523,6 @@ func (p *quicAuthPreparedStream) Close() error {
 			err = p.stream.Close()
 		}
 		if p.session != nil {
-			// Auth is bound to the first stream on a physical QUIC session.
-			// Abandoning it (mix fallback, caller cancel) must tear the session
-			// down; the identity cannot be reused on a later stream.
 			p.session.failAuthentication(errors.Join(errQUICAuthenticationAborted, err))
 		}
 	})
@@ -758,6 +807,9 @@ func (s *quicSessionMux) takeUDPDropLocked(now time.Time) diagnostic.Event {
 	return event
 }
 
+// register reserves a tentative QUIC datagram route for flowID. The route only
+// carries traffic once markReady promotes it, so a caller whose setup is
+// cancelled or fails must hand the reservation back with unregister.
 func (s *quicSessionMux) register(flowID wire.FlowID) (*quicDatagramFlow, error) {
 	if flowID == 0 {
 		return nil, errors.New("nowhere: zero flow id")
@@ -780,6 +832,10 @@ func (s *quicSessionMux) register(flowID wire.FlowID) (*quicDatagramFlow, error)
 	return flow, nil
 }
 
+// unregister releases one reservation. The flow identity, not the flow id,
+// decides ownership: a late release from a cancelled setup never drops a
+// reservation that a later attempt for the same flow id has taken over
+// (upstream 6ebfebb).
 func (s *quicSessionMux) unregister(flowID wire.FlowID, flow *quicDatagramFlow, cause error) {
 	s.mu.Lock()
 	if s.flows[flowID] != flow {

@@ -25,6 +25,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Portal-admitted test keys: 32 lowercase hexadecimal characters, matching the
+// Nowhere 2.2.1 Portal key rule for listener and next-hop keys. The same
+// literals double as lenient client-side (outbound) keys.
+const (
+	testPortalKey       = "0123456789abcdef0123456789abcdef"
+	testOriginKey       = "1123456789abcdef0123456789abcdef"
+	testRelayKey        = "2123456789abcdef0123456789abcdef"
+	testRelay1Key       = "3123456789abcdef0123456789abcdef"
+	testRelay2Key       = "4123456789abcdef0123456789abcdef"
+	testMatrixRelayKey  = "5123456789abcdef0123456789abcdef"
+	testMatrixOriginKey = "6123456789abcdef0123456789abcdef"
+)
+
 // TestInboundChainedPortalForwarding exercises native Portal chaining:
 // client outbound -> relay inbound (next) -> origin Portal -> echo target,
 // for both TCP and UDP flows. The tcp/tcp matrix carries UDP over UoT with
@@ -68,7 +81,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 	}
 	next := &option.NowhereNextOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: originPort},
-		Password:      "origin-key",
+		Password:      testOriginKey,
 		Up:            "tcp",
 		Down:          "tcp",
 	}
@@ -82,7 +95,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 			Listen:     common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1"))),
 			ListenPort: relayPort,
 		},
-		Password: "relay-key",
+		Password: testRelayKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
@@ -100,7 +113,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 
 	client, err := NewOutbound(context.Background(), nil, logger, "client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: relayPort},
-		Password:      "relay-key",
+		Password:      testRelayKey,
 		Up:            "tcp",
 		Down:          "tcp",
 		Pool:          common.Ptr(0),
@@ -160,7 +173,7 @@ func testInboundChainedPortalForwarding(t *testing.T, testCase chainTestCase) {
 	require.NoError(t, err)
 	direct, err := NewOutbound(context.Background(), nil, logger, "origin-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: originPort},
-		Password:      "origin-key",
+		Password:      testOriginKey,
 		Up:            "tcp",
 		Down:          "tcp",
 		Pool:          common.Ptr(0),
@@ -222,7 +235,7 @@ func TestNewInboundRejectsChainedPortalWithoutPassword(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	_, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
@@ -239,13 +252,13 @@ func TestInboundMultiHopPortalForwarding(t *testing.T) {
 	keyPair, certPEM, keyPEM := chainTestKeyPair(t)
 	echoAddr := startChainTestEcho(t)
 	originPort := startChainTestOrigin(t, keyPair, "")
-	relay2, relay2Port := startChainTestRelay(t, certPEM, keyPEM, "relay-2-key", originPort, "origin-key")
-	_, relay1Port := startChainTestRelay(t, certPEM, keyPEM, "relay-1-key", relay2Port, "relay-2-key")
+	relay2, relay2Port := startChainTestRelay(t, certPEM, keyPEM, testRelay2Key, originPort, testOriginKey)
+	_, relay1Port := startChainTestRelay(t, certPEM, keyPEM, testRelay1Key, relay2Port, testRelay2Key)
 
 	logger := log.NewNOPFactory().Logger()
 	client, err := NewOutbound(context.Background(), nil, logger, "multi-hop-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: relay1Port},
-		Password:      "relay-1-key",
+		Password:      testRelay1Key,
 		Up:            "tcp",
 		Down:          "tcp",
 		Pool:          common.Ptr(0),
@@ -326,13 +339,13 @@ func TestNewInboundRejectsChainedPortalWithoutServer(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	_, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
 		},
 		Next: &option.NowhereNextOptions{
-			Password: "origin-key",
+			Password: testOriginKey,
 		},
 	})
 	require.ErrorContains(t, err, "missing next server")
@@ -342,14 +355,14 @@ func TestNewInboundRejectsChainedPortalInvalidCarrier(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	_, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
-			Password:      "origin-key",
+			Password:      testOriginKey,
 			Up:            "quic",
 			Down:          "quic",
 		},
@@ -361,14 +374,14 @@ func TestNewInboundAcceptsChainedPortalNoneServerNameAndPin(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	relay, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
-			Password:      "origin-key",
+			Password:      testOriginKey,
 			Up:            "tcp",
 			Down:          "tcp",
 			ServerName:    "none",
@@ -383,14 +396,14 @@ func TestNewInboundRejectsChainedPortalInvalidServerName(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
 	_, err := NewInbound(context.Background(), nil, logger, "nw", option.NowhereInboundOptions{
-		Password: "secret",
+		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
-			Password:      "origin-key",
+			Password:      testOriginKey,
 			Up:            "tcp",
 			Down:          "tcp",
 			ServerName:    "127.0.0.1",
@@ -454,7 +467,7 @@ func startChainTestEcho(t *testing.T) M.Socksaddr {
 // a single accepted ALPN (empty keeps the default nw2).
 func startChainTestOrigin(t *testing.T, keyPair *stdtls.Certificate, alpn string) uint16 {
 	t.Helper()
-	credentials, err := wire.NewCredentials("origin-key")
+	credentials, err := wire.NewCredentials(testOriginKey)
 	require.NoError(t, err)
 	config, err := nwserver.NewConfig(nwserver.ConfigOptions{
 		Credentials: credentials,
