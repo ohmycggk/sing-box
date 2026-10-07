@@ -1,4 +1,4 @@
-// Package morph implements the Nowhere 2.1 keyed socket transform below
+// Package morph implements the Nowhere 2.2 keyed socket transform below
 // TLS/QUIC.
 package morph
 
@@ -49,7 +49,8 @@ func Derive(sharedKey []byte) Keys {
 
 // The TCP prelude is opaque protocol data sent before the nonce. Receivers
 // consume it without interpreting it. The low7 policy clears each random
-// byte's high bit; full8 leaves all eight bits unchanged.
+// byte's high bit; full8 leaves all eight bits unchanged. full8 is the default
+// when NOW_MORPH_TCP_PRELUDE is unset.
 type preludePolicy uint8
 
 const (
@@ -57,14 +58,21 @@ const (
 	preludeFull8
 )
 
+// preludePolicyFromEnv reads NOW_MORPH_TCP_PRELUDE. An unset variable selects
+// full8 (the Nowhere 2.2 default); a set-but-empty value is rejected rather
+// than silently falling back, matching the Rust transport policy.
 func preludePolicyFromEnv() (preludePolicy, error) {
-	switch value := os.Getenv(preludeEnv); value {
-	case "", "low7":
+	value, ok := os.LookupEnv(preludeEnv)
+	if !ok {
+		return preludeFull8, nil
+	}
+	switch value {
+	case "low7":
 		return preludeLow7, nil
 	case "full8":
 		return preludeFull8, nil
 	default:
-		return 0, fmt.Errorf("nowhere: %s must be low7 or full8", preludeEnv)
+		return 0, fmt.Errorf("%s must be low7 or full8", preludeEnv)
 	}
 }
 

@@ -2,17 +2,11 @@ package bundle
 
 import (
 	"errors"
-	"time"
 
 	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
 )
 
-// DefaultMixFallbackTimeout is the primary mix-route preparation budget.
-// Failure or timeout starts the other allowed route once with a new flow ID.
-const DefaultMixFallbackTimeout = time.Second
-
-// CarrierMode is the client-side up/down policy. Mix resolves locally to a
-// concrete TT, TQ, QT, or QQ pair before any FlowHeader is written.
+// CarrierMode is the client-side up/down policy.
 type CarrierMode uint8
 
 const (
@@ -20,11 +14,9 @@ const (
 	ModeTCP CarrierMode = iota
 	// ModeUDP always selects QUIC/UDP for that direction.
 	ModeUDP
-	// ModeMix randomly selects TLS/TCP or QUIC/UDP for that direction.
-	ModeMix
 )
 
-// ParseCarrierMode accepts tcp, udp, or mix. Empty and unknown values fail;
+// ParseCarrierMode accepts tcp or udp. Empty and unknown values fail;
 // hosts apply their own URL default before calling this.
 func ParseCarrierMode(value string) (CarrierMode, error) {
 	switch value {
@@ -32,15 +24,10 @@ func ParseCarrierMode(value string) (CarrierMode, error) {
 		return ModeTCP, nil
 	case "udp":
 		return ModeUDP, nil
-	case "mix":
-		return ModeMix, nil
 	default:
-		return 0, errors.New("nowhere: carrier mode must be tcp, udp, or mix")
+		return 0, errors.New("nowhere: carrier mode must be tcp or udp")
 	}
 }
-
-// IsMix reports whether the policy is resolved per flow.
-func (m CarrierMode) IsMix() bool { return m == ModeMix }
 
 func (m CarrierMode) String() string {
 	switch m {
@@ -48,32 +35,24 @@ func (m CarrierMode) String() string {
 		return "tcp"
 	case ModeUDP:
 		return "udp"
-	case ModeMix:
-		return "mix"
 	default:
 		return "invalid"
 	}
 }
 
-// Selectors maps a policy onto the BundleOptions carrier fields. Mix returns
-// a zero carrier and mix=true; the concrete pair is chosen at open time.
-func (m CarrierMode) Selectors() (carrier wire.Carrier, mix bool) {
+// Selectors maps a policy onto the BundleOptions carrier fields.
+func (m CarrierMode) Selectors() wire.Carrier {
 	switch m {
 	case ModeTCP:
-		return wire.CarrierTLSTCP, false
+		return wire.CarrierTLSTCP
 	case ModeUDP:
-		return wire.CarrierQUIC, false
-	case ModeMix:
-		return 0, true
+		return wire.CarrierQUIC
 	default:
-		return 0, false
+		return 0
 	}
 }
 
-func carrierMode(carrier wire.Carrier, mix bool) (CarrierMode, error) {
-	if mix {
-		return ModeMix, nil
-	}
+func carrierMode(carrier wire.Carrier) (CarrierMode, error) {
 	switch carrier {
 	case wire.CarrierTLSTCP:
 		return ModeTCP, nil

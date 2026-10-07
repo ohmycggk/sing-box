@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
@@ -32,14 +33,31 @@ func TestDeriveMatchesRustFixedVectors(t *testing.T) {
 }
 
 func TestPreludePolicyFromEnv(t *testing.T) {
+	prev, had := os.LookupEnv(preludeEnv)
+	t.Cleanup(func() {
+		if had {
+			_ = os.Setenv(preludeEnv, prev)
+		} else {
+			_ = os.Unsetenv(preludeEnv)
+		}
+	})
+
+	// An unset variable defaults to full8 as of Nowhere 2.2.
+	if err := os.Unsetenv(preludeEnv); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := preludePolicyFromEnv(); err != nil || got != preludeFull8 {
+		t.Fatalf("unset: got %d, err %v; want full8", got, err)
+	}
+
 	cases := []struct {
 		value  string
 		want   preludePolicy
 		wantEr bool
 	}{
-		{value: "", want: preludeLow7},
 		{value: "low7", want: preludeLow7},
 		{value: "full8", want: preludeFull8},
+		{value: "", wantEr: true},
 		{value: "bogus", wantEr: true},
 	}
 	for _, tc := range cases {
@@ -75,6 +93,7 @@ func TestGeneratePreludeLow7ClearsHighBits(t *testing.T) {
 }
 
 func TestTCPPreludeWireImage(t *testing.T) {
+	t.Setenv(preludeEnv, "low7")
 	keys := Derive([]byte("secret"))
 	left, right := net.Pipe()
 	client, err := WrapTCPClient(left, keys)
@@ -96,8 +115,8 @@ func TestTCPPreludeWireImage(t *testing.T) {
 		errCh <- err
 	}()
 
-	// The bootstrap is exactly 64 prelude bytes plus a 12-byte nonce. The
-	// low7 policy keeps every prelude byte inside seven bits.
+	// The bootstrap is exactly 64 prelude bytes plus a 12-byte nonce. Under the
+	// low7 policy every prelude byte stays inside seven bits.
 	bootstrap := make([]byte, preludeLen+nonceLen)
 	if _, err := io.ReadFull(right, bootstrap); err != nil {
 		t.Fatal(err)

@@ -178,18 +178,15 @@ func newCarrierDialPlan(ctx context.Context, logger log.ContextLogger, options c
 
 func (p *carrierDialPlan) newBundle() (*bundle.CarrierBundle, error) {
 	bundleCfg := bundle.BundleOptions{
-		TCP:                p.tcpCfg,
-		Credentials:        p.credentials,
-		ALPN:               p.alpn,
-		Observer:           p.observer,
-		PoolSize:           p.matrix.Pool,
-		PrewarmOnStart:     p.prewarmOnStart,
-		Up:                 p.matrix.UpCarrier(),
-		Down:               p.matrix.DownCarrier(),
-		MixUp:              p.matrix.MixUp,
-		MixDown:            p.matrix.MixDown,
-		MixFallbackTimeout: p.matrix.MixFallbackTimeout,
-		Mux:                p.matrix.Mux,
+		TCP:            p.tcpCfg,
+		Credentials:    p.credentials,
+		ALPN:           p.alpn,
+		Observer:       p.observer,
+		PoolSize:       p.matrix.Pool,
+		PrewarmOnStart: p.prewarmOnStart,
+		Up:             p.matrix.UpCarrier(),
+		Down:           p.matrix.DownCarrier(),
+		Mux:            p.matrix.Mux,
 	}
 	if p.newQUICBackend != nil {
 		bundleCfg.QUIC = p.newQUICBackend()
@@ -217,7 +214,6 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 
 	matrix, err := ResolveMatrix(MatrixInputs{
 		Up: options.Up, Down: options.Down, Pool: options.Pool, Mux: options.Mux,
-		MixFallbackTimeout: options.MixFallbackTimeout.Build(),
 	})
 	if err != nil {
 		return nil, err

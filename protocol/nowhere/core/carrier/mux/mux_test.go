@@ -15,12 +15,17 @@ import (
 
 func startPair(t *testing.T) (*Handle, *Incoming, *Handle, *Incoming) {
 	t.Helper()
+	return startPairConfig(t, DefaultConfig())
+}
+
+func startPairConfig(t *testing.T, config Config) (*Handle, *Incoming, *Handle, *Incoming) {
+	t.Helper()
 	left, right := net.Pipe()
-	client, clientIn, err := Start(left, DefaultConfig())
+	client, clientIn, err := Start(left, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, serverIn, err := Start(right, DefaultConfig())
+	server, serverIn, err := Start(right, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +384,10 @@ func (h *Handle) hasFlow(flowID uint32) bool {
 	return h.shared.flows[flowID] != nil
 }
 
+func (h *Handle) hasGeneration(flowID uint32, generation uint64) bool {
+	return h.shared.isCurrentFlow(flowID, generation)
+}
+
 func (h *Handle) flowRetainedLocallyFinished(flowID uint32) bool {
 	h.shared.flowsMu.Lock()
 	defer h.shared.flowsMu.Unlock()
@@ -406,8 +415,14 @@ func (h *Handle) connRecvUnits() int {
 // bare frames on the other pipe end.
 func startRawCarrier(t *testing.T) (*Handle, net.Conn) {
 	t.Helper()
+	return startRawCarrierConfig(t, DefaultConfig())
+}
+
+// startRawCarrierConfig is startRawCarrier with a caller-supplied budget.
+func startRawCarrierConfig(t *testing.T, config Config) (*Handle, net.Conn) {
+	t.Helper()
 	left, right := net.Pipe()
-	handle, _, err := Start(left, DefaultConfig())
+	handle, _, err := Start(left, config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,7 +433,7 @@ func startRawCarrier(t *testing.T) (*Handle, net.Conn) {
 	return handle, right
 }
 
-func TestUnknownFlowDataTearsDownCarrier(t *testing.T) {
+func TestUnknownFlowDataResetsOnlyThatFlow(t *testing.T) {
 	client, raw := startRawCarrier(t)
 	payload := []byte("bad")
 	header, err := wire.DataMuxHeader(999, len(payload))
@@ -426,7 +441,587 @@ func TestUnknownFlowDataTearsDownCarrier(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFrame(t, raw, header, payload)
-	waitFor(t, 2*time.Second, client.IsClosed)
+	// The unknown flow is reset to the peer; the carrier survives.
+	waitFor(t, 2*time.Second, func() bool {
+		return readFrameTimeout(t, raw, 50*time.Millisecond, func(h wire.MuxHeader) bool {
+			return h.Kind == wire.MuxFrameReset && h.FlowID == 999
+		})
+	})
+	if client.IsClosed() {
+		t.Fatal("carrier closed by DATA for an unknown flow")
+	}
+	openHeader, err := wire.OpenMuxHeader(7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, openHeader, nil)
+	waitFor(t, 2*time.Second, func() bool { return client.ActiveStreams() == 1 })
+	if client.IsClosed() {
+		t.Fatal("carrier closed after a later OPEN")
+	}
+}
+
+// readFrameTimeout reads frames until accept reports true, the deadline
+// passes, or the raw peer fails.
+func readFrameTimeout(t *testing.T, r net.Conn, timeout time.Duration, accept func(wire.MuxHeader) bool) bool {
+	t.Helper()
+	if err := r.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.SetReadDeadline(time.Time{}) }()
+	for {
+		var buf [wire.MuxHeaderLen]byte
+		if _, err := io.ReadFull(r, buf[:]); err != nil {
+			return false
+		}
+		header, err := wire.DecodeMuxHeader(buf[:])
+		if err != nil {
+			return false
+		}
+		if n := wire.MuxPayloadLen(header); n > 0 {
+			if _, err := io.CopyN(io.Discard, r, int64(n)); err != nil {
+				return false
+			}
+		}
+		if accept(header) {
+			return true
+		}
+	}
+}
+
+func TestDataAfterFinResetsOnlyThatFlow(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	openHeader, err := wire.OpenMuxHeader(8, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openOther, err := wire.OpenMuxHeader(9, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, openHeader, nil)
+	writeFrame(t, raw, openOther, nil)
+	waitFor(t, 2*time.Second, func() bool { return client.ActiveStreams() == 2 })
+
+	finHeader, err := wire.FinMuxHeader(8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, finHeader, nil)
+	payload := []byte("late")
+	dataHeader, err := wire.DataMuxHeader(8, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, dataHeader, payload)
+
+	gotReset := readFrameTimeout(t, raw, 2*time.Second, func(h wire.MuxHeader) bool {
+		return h.Kind == wire.MuxFrameReset && h.FlowID == 8
+	})
+	if !gotReset {
+		t.Fatal("DATA after FIN did not reset the flow")
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed by DATA after FIN")
+	}
+	// The sibling flow still receives DATA.
+	maxStream := creditUnits(DefaultConfig().StreamWindowBytes)
+	siblingPayload := []byte("ok!")
+	sibHeader, err := wire.DataMuxHeader(9, len(siblingPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, sibHeader, siblingPayload)
+	waitFor(t, 2*time.Second, func() bool {
+		credit, ok := client.flowReceiveCredit(9)
+		return ok && credit == maxStream-1
+	})
+	if client.IsClosed() {
+		t.Fatal("carrier closed by DATA after FIN")
+	}
+	if client.ActiveStreams() != 1 {
+		t.Fatalf("active streams = %d, want 1 (sibling only)", client.ActiveStreams())
+	}
+}
+
+func TestStreamWindowOverflowResetsOnlyThatFlow(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	openBad, err := wire.OpenMuxHeader(7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openHealthy, err := wire.OpenMuxHeader(9, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, openBad, nil)
+	writeFrame(t, raw, openHealthy, nil)
+	waitFor(t, 2*time.Second, func() bool { return client.ActiveStreams() == 2 })
+
+	// Fill the per-flow window exactly, then overflow it by one frame.
+	maxStream := creditUnits(DefaultConfig().StreamWindowBytes)
+	frames := maxStream * creditUnitBytes / FrameBytes
+	dataHeader, err := wire.DataMuxHeader(7, FrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte{0x11}, FrameBytes)
+	for i := 0; i < frames; i++ {
+		writeFrame(t, raw, dataHeader, payload)
+	}
+	writeFrame(t, raw, dataHeader, payload)
+
+	if !readFrameTimeout(t, raw, 3*time.Second, func(h wire.MuxHeader) bool {
+		return h.Kind == wire.MuxFrameReset && h.FlowID == 7
+	}) {
+		t.Fatal("per-flow window overflow did not reset the flow")
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed by per-flow window overflow")
+	}
+	if client.hasFlow(7) {
+		t.Fatal("flow state survived a per-flow window overflow")
+	}
+	// The sibling flow still admits DATA.
+	sibHeader, err := wire.DataMuxHeader(9, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, sibHeader, []byte{0x42})
+	waitFor(t, 2*time.Second, func() bool {
+		credit, ok := client.flowReceiveCredit(9)
+		return ok && credit == maxStream-1
+	})
+	if client.IsClosed() {
+		t.Fatal("carrier closed after a sibling flowed past a resetted flow")
+	}
+}
+
+func TestOpenStreamWindowOverflowResetsTheNewFlow(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	openHeader, err := wire.OpenMuxHeader(7, 0xffff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, openHeader, nil)
+	if !readFrameTimeout(t, raw, 2*time.Second, func(h wire.MuxHeader) bool {
+		return h.Kind == wire.MuxFrameReset && h.FlowID == 7
+	}) {
+		t.Fatal("OPEN with an overflowing window extension did not reset the flow")
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed by OPEN window extension overflow")
+	}
+	if client.hasFlow(7) {
+		t.Fatal("flow state survived an OPEN window extension overflow")
+	}
+}
+
+func TestConnectionReceiveOverflowIsCarrierFatal(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	openA, err := wire.OpenMuxHeader(7, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openB, err := wire.OpenMuxHeader(9, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, openA, nil)
+	writeFrame(t, raw, openB, nil)
+	waitFor(t, 2*time.Second, func() bool { return client.ActiveStreams() == 2 })
+
+	// Fill both stream windows to the connection window without a reader
+	// draining, then overflow the connection window. The raw peer owns the
+	// pipe, so every frame is written in order.
+	perStream := creditUnits(DefaultConfig().StreamWindowBytes)
+	frames := perStream * creditUnitBytes / FrameBytes
+	dataHeader, err := wire.DataMuxHeader(7, FrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataHeader9, err := wire.DataMuxHeader(9, FrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte{0x22}, FrameBytes)
+	for i := 0; i < frames; i++ {
+		writeFrame(t, raw, dataHeader, payload)
+		writeFrame(t, raw, dataHeader9, payload)
+	}
+	overflow, err := wire.DataMuxHeader(7, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, overflow, []byte{0})
+	select {
+	case <-client.Closed():
+	case <-time.After(3 * time.Second):
+		t.Fatal("connection receive overflow did not close the carrier")
+	}
+	if reason := client.CloseReason(); reason != CloseReasonProtocolViolation {
+		t.Fatalf("close reason = %v, want protocol error", reason)
+	}
+}
+
+func TestResetDiscardsQueuedDataAndRestoresConnectionCredit(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	stream, err := client.OpenStream(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if header := readFrame(t, raw); header.Kind == wire.MuxFrameOpen && header.FlowID == 7 {
+			break
+		}
+	}
+	maxConn := creditUnits(DefaultConfig().ConnectionWindowBytes)
+	// Queue DATA the application never reads, then reset the flow.
+	payload := bytes.Repeat([]byte{0x33}, 4096)
+	dataHeader, err := wire.DataMuxHeader(7, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, dataHeader, payload)
+	waitFor(t, 2*time.Second, func() bool { return client.connRecvUnits() == maxConn-4 })
+
+	resetHeader, err := wire.ResetMuxHeader(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, resetHeader, nil)
+	waitFor(t, 2*time.Second, func() bool { return !client.hasFlow(7) })
+	// Buffered DATA returns its connection credit exactly once.
+	waitFor(t, 2*time.Second, func() bool {
+		pending := int(client.shared.pendingConn.Load())
+		return client.connRecvUnits()+pending >= maxConn
+	})
+	done := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4)
+		_, err := stream.Read(buf)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errReset) {
+			t.Fatalf("read after reset = %v, want mux flow reset", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("reset did not wake the blocked reader")
+	}
+	if client.IsClosed() {
+		t.Fatal("carrier closed by flow reset")
+	}
+}
+
+func TestReusedFlowIDIsolatedFromStaleStream(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	stale, err := client.OpenStream(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if header := readFrame(t, raw); header.Kind == wire.MuxFrameOpen && header.FlowID == 7 {
+			break
+		}
+	}
+	// Peer RESET retires the flow; reopening the ID gets a new generation.
+	resetHeader, err := wire.ResetMuxHeader(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, resetHeader, nil)
+	waitFor(t, 2*time.Second, func() bool { return !client.hasFlow(7) })
+
+	replacement, err := client.OpenStream(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if header := readFrame(t, raw); header.Kind == wire.MuxFrameOpen && header.FlowID == 7 {
+			break
+		}
+	}
+	if _, err := stale.Write([]byte("stale")); !errors.Is(err, errClosed) {
+		t.Fatalf("stale write = %v, want closed", err)
+	}
+	if err := stale.CloseWrite(); !errors.Is(err, errClosed) {
+		t.Fatalf("stale CloseWrite = %v, want closed", err)
+	}
+	_ = stale.Close()
+	if client.ActiveStreams() != 1 {
+		t.Fatalf("active streams = %d, want 1 (replacement only)", client.ActiveStreams())
+	}
+	if !client.hasFlow(7) {
+		t.Fatal("replacement flow lost its state")
+	}
+	// The replacement still works and the stale FIN never lands.
+	if _, err := replacement.Write([]byte("fresh")); err != nil {
+		t.Fatal(err)
+	}
+	if !readFrameTimeout(t, raw, 2*time.Second, func(h wire.MuxHeader) bool {
+		return h.Kind == wire.MuxFrameData && h.FlowID == 7
+	}) {
+		t.Fatal("replacement stream could not write")
+	}
+	_ = replacement.Close()
+}
+
+// startQuietRawCarrier is startRawCarrier with a configuration whose initial
+// connection WINDOW batch is empty, so the writer stays idle and read-loop
+// close reasons are deterministic.
+func startQuietRawCarrier(t *testing.T) (*Handle, net.Conn) {
+	t.Helper()
+	return startRawCarrierConfig(t, Config{
+		StreamWindowBytes:     BaseStreamWindowBytes,
+		ConnectionWindowBytes: BaseConnectionWindowBytes,
+		MaxStreams:            64,
+		OutboundFrames:        64,
+	})
+}
+
+// startQuietPair pairs two handles configured so neither side queues an
+// initial connection WINDOW batch: the writer stays idle, which makes
+// read-loop close reasons deterministic.
+func startQuietPair(t *testing.T) (*Handle, *Incoming, *Handle, *Incoming) {
+	t.Helper()
+	return startPairConfig(t, Config{
+		StreamWindowBytes:     BaseStreamWindowBytes,
+		ConnectionWindowBytes: BaseConnectionWindowBytes,
+		MaxStreams:            64,
+		OutboundFrames:        64,
+	})
+}
+
+// drainFrames consumes frames from a raw peer until the pipe fails.
+func drainFrames(raw net.Conn) {
+	for {
+		var buf [wire.MuxHeaderLen]byte
+		if _, err := io.ReadFull(raw, buf[:]); err != nil {
+			return
+		}
+		header, err := wire.DecodeMuxHeader(buf[:])
+		if err != nil {
+			return
+		}
+		if n := wire.MuxPayloadLen(header); n > 0 {
+			if _, err := io.CopyN(io.Discard, raw, int64(n)); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func TestPendingResetReservesFlowID(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	// Nobody reads the raw end, so the queued RESET stays pending and the
+	// flow ID remains reserved until the frame reaches the wire.
+	payload := []byte("x")
+	dataHeader, err := wire.DataMuxHeader(55, len(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFrame(t, raw, dataHeader, payload)
+	waitFor(t, 2*time.Second, func() bool {
+		client.shared.pendingResetsMu.Lock()
+		defer client.shared.pendingResetsMu.Unlock()
+		_, pending := client.shared.pendingResets[55]
+		return pending
+	})
+	if client.CanOpenFlow(55) {
+		t.Fatal("pending RESET did not reserve the flow ID")
+	}
+	if _, err := client.PrepareStream(55); !errors.Is(err, errFlowExists) {
+		t.Fatalf("PrepareStream on a reserved ID = %v, want flow exists", err)
+	}
+	// Draining the wire lets the RESET land and releases the ID. The batch
+	// can carry WINDOW updates behind the RESET, so the drain keeps running
+	// until the reservation is released.
+	go drainFrames(raw)
+	waitFor(t, 2*time.Second, func() bool {
+		client.shared.pendingResetsMu.Lock()
+		defer client.shared.pendingResetsMu.Unlock()
+		_, pending := client.shared.pendingResets[55]
+		return !pending
+	})
+	if !client.CanOpenFlow(55) {
+		t.Fatal("flow ID stayed reserved after the RESET was written")
+	}
+}
+
+func TestCloseReasonFirstWins(t *testing.T) {
+	client, _, _, _ := startPair(t)
+	// Idle retirement and application close race; the first reason wins.
+	client.CloseWithReason(CloseReasonIdleTimeout)
+	client.CloseWithReason(CloseReasonApplication)
+	client.Close()
+	if reason := client.CloseReason(); reason != CloseReasonIdleTimeout {
+		t.Fatalf("close reason = %v, want idle timeout", reason)
+	}
+}
+
+func TestPeerEOFCloseReason(t *testing.T) {
+	// A quiet pair keeps both writers idle, so the peer close is observed by
+	// the reader loop only.
+	client, _, server, _ := startQuietPair(t)
+	server.Close()
+	select {
+	case <-client.Closed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("carrier did not close after peer EOF")
+	}
+	if reason := client.CloseReason(); reason != CloseReasonPeerEof {
+		t.Fatalf("close reason = %v, want unexpected EOF", reason)
+	}
+}
+
+func TestApplicationCloseReason(t *testing.T) {
+	client, _, _, _ := startPair(t)
+	client.Close()
+	if got := client.CloseReason(); got != CloseReasonApplication {
+		t.Fatalf("close reason = %v, want application closed", got)
+	}
+	if got := client.CloseReason().String(); got != "application closed" {
+		t.Fatalf("reason text = %q", got)
+	}
+}
+
+func TestMalformedFrameClosesCarrierWithProtocolViolation(t *testing.T) {
+	client, raw := startRawCarrier(t)
+	// A header byte no frame kind claims is a protocol violation.
+	if _, err := raw.Write([]byte{0x7f, 0, 0, 0, 0, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.Closed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("malformed frame did not close the carrier")
+	}
+	if reason := client.CloseReason(); reason != CloseReasonProtocolViolation {
+		t.Fatalf("close reason = %v, want protocol error", reason)
+	}
+}
+
+func TestTruncatedFrameClosesCarrier(t *testing.T) {
+	client, raw := startQuietRawCarrier(t)
+	// A DATA header that promises a payload the peer never finishes.
+	dataHeader, err := wire.DataMuxHeader(7, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := wire.EncodeMuxHeader(dataHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Write(append(encoded[:], 1, 2, 3, 4, 5, 6, 7, 8)); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.Closed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("truncated frame did not close the carrier")
+	}
+	if reason := client.CloseReason(); reason != CloseReasonPeerEof {
+		t.Fatalf("close reason = %v, want unexpected EOF", reason)
+	}
+}
+
+// blockWriter occupies every outbound slot so later frame enqueues block. It
+// relies on the writer being stuck writing to the unread raw pipe, which is
+// what startRawCarrier guarantees.
+func blockWriter(h *Handle) {
+	for i := 0; i <= cap(h.shared.dataTx); i++ {
+		select {
+		case h.shared.dataTx <- outbound{}:
+		case <-h.shared.closedCh:
+			return
+		}
+	}
+}
+
+// startBlockedRawCarrier returns a handle whose writer can never drain its
+// outbound queue, so an OPEN enqueue blocks until the caller's context ends.
+func startBlockedRawCarrier(t *testing.T, config Config) *Handle {
+	t.Helper()
+	client, _ := startRawCarrierConfig(t, config)
+	go blockWriter(client)
+	waitFor(t, 2*time.Second, func() bool {
+		return len(client.shared.dataTx) == cap(client.shared.dataTx)
+	})
+	return client
+}
+
+func TestCancelledOpenRollsBackReservation(t *testing.T) {
+	config := DefaultConfig()
+	config.OutboundFrames = 1
+	client := startBlockedRawCarrier(t, config)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	stream, err := client.PrepareStream(3)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	opening := make(chan error, 1)
+	go func() { opening <- client.OpenPrepared(ctx, stream) }()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-opening:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("OpenPrepared = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled OpenPrepared did not return")
+	}
+	if client.hasFlow(3) {
+		t.Fatal("cancelled open leaked the flow reservation")
+	}
+	if client.IsClosed() {
+		t.Fatal("cancelled open closed the carrier")
+	}
+	// The flow ID is reusable after the rollback.
+	replacement, err := client.PrepareStream(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !client.hasGeneration(3, replacement.generation) {
+		t.Fatal("flow ID was not reusable after the rollback")
+	}
+}
+
+func TestCancelledOpenRollbackPreservesReusedFlowID(t *testing.T) {
+	config := DefaultConfig()
+	config.OutboundFrames = 1
+	client := startBlockedRawCarrier(t, config)
+
+	stale, err := client.PrepareStream(3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleGeneration := stale.generation
+	ctx, cancel := context.WithCancel(context.Background())
+	opening := make(chan error, 1)
+	go func() { opening <- client.OpenPrepared(ctx, stale) }()
+	time.Sleep(20 * time.Millisecond)
+	// Retire and reuse the ID while the open is still blocked.
+	client.shared.removeCurrentFlow(3, staleGeneration)
+	replacement, err := client.PrepareStream(3)
+	if err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-opening; !errors.Is(err, context.Canceled) {
+		t.Fatalf("OpenPrepared = %v, want context.Canceled", err)
+	}
+	if !client.hasGeneration(3, replacement.generation) {
+		t.Fatal("stale rollback removed the reused flow")
+	}
 }
 
 func TestFinHalfCloseKeepsReverseDirection(t *testing.T) {

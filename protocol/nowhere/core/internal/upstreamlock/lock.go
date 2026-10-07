@@ -95,13 +95,22 @@ func TreeHash(dir string) (string, error) {
 		return "", err
 	}
 	sort.Strings(names)
+	return FilesTreeHash(func(name string) ([]byte, error) {
+		return os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+	}, names...)
+}
+
+// FilesTreeHash implements sha256-tree-v1 over an explicit sorted name list,
+// reading each file through content. It backs both TreeHash and the upstream
+// protocol hash (see scripts/generate-upstream-lock.sh).
+func FilesTreeHash(content func(name string) ([]byte, error), names ...string) (string, error) {
 	tree := sha256.New()
 	for _, name := range names {
-		content, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(name)))
+		raw, err := content(name)
 		if err != nil {
 			return "", err
 		}
-		contentHash := sha256.Sum256(content)
+		contentHash := sha256.Sum256(raw)
 		_, _ = tree.Write([]byte(name))
 		_, _ = tree.Write([]byte{0})
 		_, _ = tree.Write([]byte(hex.EncodeToString(contentHash[:])))

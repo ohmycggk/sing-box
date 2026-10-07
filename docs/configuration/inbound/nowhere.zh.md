@@ -11,7 +11,7 @@ icon: material/new-box
 
   ... // 监听字段
 
-  "password": "secret",
+  "password": "0123456789abcdef0123456789abcdef",
   "morph": false,
   "network": [
     "tcp",
@@ -22,7 +22,7 @@ icon: material/new-box
   "next": {
     "server": "origin.example",
     "server_port": 2080,
-    "password": "origin-key",
+    "password": "0123456789abcdef0123456789abcde0",
     "up": "tcp",
     "down": "tcp",
     "pool": 5,
@@ -40,14 +40,13 @@ SingBox 路由（除非通过 `next` 链式转发到另一个 Portal）。
 
 不允许明文入站，必须启用 TLS。
 
-这是 Nowhere 2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
+这是 Nowhere 2.2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
 认证使用绑定 TLS exporter 的 AuthFrame；FlowHeader 为 5 字节，携带 0..7 的
 HOPS 转发预算；QUIC UDP 头为打包格式。AuthFrame 之后，入站 TLS 会自动识别
-专用通道（`mux=0`）与基于信用窗口的标记 Mux 分片（`mux=1`）；
-`mix` 仍是客户端策略，解析为 TT / TQ / QT / QQ。
+专用通道（`mux=0`）与基于信用窗口的标记 Mux 分片（`mux=1`）。
 
 `morph` 为本端点的所有 carrier 启用 Nowhere 2 Morph 密钥变换。Morph 不会在
-带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.1 的 Morph 变换与
+带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.2.1 的 Morph 变换与
 2.0.x Morph 线级不兼容。
 
 Nowhere 1.7 保留 1.5/1.6 的认证与数据面格式，但将 FLOW 头部的高 3 位用作 HOPS
@@ -67,15 +66,24 @@ Nowhere 1.7 或更高版本，因为旧版本端点会将非零 HOPS 视为保�
 
 用于派生认证材料的共享密钥，必须与出站 `password` 一致。
 
+作为 Portal，本端点执行 Nowhere 2.2.1 的密钥准入规则：URL 百分号解码后，密钥
+必须是 32–64 个 lowercase 十六进制字符（`[0-9a-f]{32,64}`，允许奇数长度）。
+密钥文本直接作为 HKDF 输入，不会再次做十六进制解码。可使用
+`nowhere generate-key` 生成。客户端（出站）密钥保持宽松：解码后 1–255 字节。
+
 #### morph
 
 为本 Portal 的所有 carrier 启用 Nowhere 2 Morph 密钥变换：认证开始之前，会在
 TLS 之下先接收一个 64 字节随机 TCP prelude；TLS 与 QUIC 之下都会使用由共享
 密钥派生的方向性 ChaCha20 密钥。默认：`false`。
 
+TCP prelude 策略默认为 `full8`（每个 prelude 字节的 8 位全部随机）。可将环境
+变量 `NOW_MORPH_TCP_PRELUDE` 设为 `low7` 以沿用旧策略（清除每个字节的高位）；
+设置为空串会被拒绝。跳的两端必须使用相同策略。
+
 Morph 不会在带内协商：`morph` 必须与客户端一致。链式转发时，除非被
-`next.morph` 覆盖，每一跳都会继承该设置。Nowhere 2.1 的 Morph 变换与
-2.0.x Morph 线级不兼容，因此 `morph=1` 跳上的所有对端都必须运行 Nowhere 2.1。
+`next.morph` 覆盖，每一跳都会继承该设置。Nowhere 2.2.1 的 Morph 变换与
+2.0.x Morph 线级不兼容，因此 `morph=1` 跳上的所有对端都必须运行 Nowhere 2.2.1。
 
 #### network
 
@@ -140,21 +148,28 @@ Nowhere 固定使用 TLS 1.3。省略 ALPN 时会补全为 `nw2`；显式配置�
 | --- | --- | --- |
 | `server` | ==必填== | 下一个 Portal 的地址。 |
 | `server_port` | ==必填== | 下一个 Portal 的端口。 |
-| `password` | ==必填== | 下一个 Portal 的共享密钥。 |
-| `up`, `down` | `udp` / `udp` | 通往下一个 Portal 的 carrier 选择（`tcp`、`udp` 或 `mix`）；必须同时设置或同时省略。`mix` 是客户端策略。任何可能选择 `udp`/`mix` 的矩阵都需要构建标签 `with_quic`。 |
+| `password` | ==必填== | 下一个 Portal 的共享密钥。与入站 `password` 执行同一套 Portal 密钥规则：URL 百分号解码后 32–64 个 lowercase 十六进制字符。 |
+| `up`, `down` | `udp` / `udp` | 通往下一个 Portal 的 carrier 选择（`tcp` 或 `udp`）；必须同时设置或同时省略。任何可能选择 `udp` 的矩阵都需要构建标签 `with_quic`。 |
 | `mux` | `0` | `0` 专用 TLS 通道，`1` 基于信用窗口的 TLS Mux（当可能走到 TCP 时）。`udp/udp&mux=1` 会规范为 `0`。 |
 | `pool` | 专用 `tcp` / `tcp` 时为 `5`，否则为 `0` | 通往下一个 Portal 的 TLS/TCP 预热连接池。超过 `256` 的值会钳制为 `256`；`mux=1` 与可走到 QUIC 的矩阵忽略 `pool`。 |
-| `mix_fallback_timeout` | `1s` | mix 主路由准备超时。 |
 | `server_name` | 无 | 用于校验下一个 Portal TLS 证书的 DNS 名称。省略、为空或字面量 `"none"` 时关闭证书校验；端点主机名仍可能作为 ClientHello SNI 发送。 |
 | `pin` | 无 | 下一个 Portal 叶子证书的 SHA-256 十六进制指纹。省略、为空或 `"none"` 时关闭证书固定；设置有效 pin 时优先于 `server_name` 与证书链校验。 |
 | `morph` | 继承入站 `morph` | 通往下一个 Portal 的方向上启用 Nowhere 2 Morph 密钥变换。省略（`nil`）时继承入站 `morph`；设置为 `true` / `false` 可按跳覆盖。跳的两端必须一致。 |
+| `dial4` | `auto` | 通过 IPv4 拨号下一个 Portal 时绑定的 IPv4 源地址。接受 `auto`（由系统决定源地址）或 IPv4 字面量；`0.0.0.0` 是合法的通配地址。 |
+| `dial6` | `auto` | 通过 IPv6 拨号下一个 Portal 时绑定的 IPv6 源地址。接受 `auto` 或 IPv6 字面量；拒绝 `::ffff:192.0.2.1` 这类 IPv4-mapped 字面量，`::` 是合法的通配地址。 |
+
+`dial4` 与 `dial6` 相互独立，可以组合使用以实现双栈源地址绑定。它们对应 Rust
+portal URL 参数 `dial4` / `dial6`，并与 `dial` 互斥：本构建的下一跳没有 `dial`
+选项，出站侧的等效传统单协议族绑定是共享的 `inet4_bind_address` /
+`inet6_bind_address` 拨号字段。已配置的绑定绝不会静默降级为自动——绑定失败会
+让本次拨号失败，并尝试下一个候选地址。
 
 链式上游客户端继承入站的 TLS ALPN。
 
 跳数预算：第一个转发 Portal 将 HOPS 初始化为 7，每一跳 Portal 间转发将其递减 1；
 当需要继续转发预算耗尽的 flow（HOPS=1）时，Portal 会在开启下一跳之前以
 `FLOW_LIMIT` 拒绝。上游 Portal 的 setup 拒绝码会原样传回下游。链中的每个
-Portal 都必须运行 Nowhere 2.1（`nw2`）。
+Portal 都必须运行 Nowhere 2.2.1（`nw2`）。
 
 ### QUIC 字段
 

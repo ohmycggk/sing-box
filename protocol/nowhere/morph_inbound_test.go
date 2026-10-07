@@ -66,7 +66,7 @@ func startMorphTCPRelay(t *testing.T) (uint16, M.Socksaddr) {
 			Listen:     common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1"))),
 			ListenPort: relayPort,
 		},
-		Password: "relay-key",
+		Password: testRelayKey,
 		Morph:    true,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
@@ -79,7 +79,7 @@ func startMorphTCPRelay(t *testing.T) (uint16, M.Socksaddr) {
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: originPort},
-			Password:      "origin-key",
+			Password:      testOriginKey,
 			Up:            "tcp",
 			Down:          "tcp",
 			Morph:         common.Ptr(false),
@@ -96,7 +96,7 @@ func newMorphTCPClient(t *testing.T, relayPort uint16, morph bool) *Outbound {
 	logger := log.NewNOPFactory().Logger()
 	client, err := NewOutbound(context.Background(), nil, logger, "client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: relayPort},
-		Password:      "relay-key",
+		Password:      testRelayKey,
 		Up:            "tcp",
 		Down:          "tcp",
 		Pool:          common.Ptr(0),

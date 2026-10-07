@@ -84,6 +84,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
 	}
+	// Portal listener key admission (Nowhere 2.2.1): percent-decode the
+	// configured key, require 32-64 lowercase hex characters, and derive from
+	// the decoded text like the Rust URL configuration layer does.
+	listenerKey, err := decodePortalKey(options.Password)
+	if err != nil {
+		return nil, err
+	}
+	options.Password = listenerKey
 	tlsOptions, err := normalizeNowhereInboundTLS(options.TLS)
 	if err != nil {
 		return nil, err
@@ -194,9 +202,18 @@ func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer d
 	if next.Server == "" || next.ServerPort == 0 {
 		return nil, E.New("nowhere: missing next server")
 	}
+	// Next-hop key admission uses the same Portal rule as the listener key,
+	// including the URL percent-decoding step.
+	nextKey, err := decodePortalKey(next.Password)
+	if err != nil {
+		return nil, err
+	}
+	dialerOptions, err := NextDialerOptions(next)
+	if err != nil {
+		return nil, err
+	}
 	matrix, err := ResolveMatrix(MatrixInputs{
 		Up: next.Up, Down: next.Down, Pool: next.Pool, Mux: next.Mux,
-		MixFallbackTimeout: next.MixFallbackTimeout.Build(),
 	})
 	if err != nil {
 		return nil, err
@@ -207,7 +224,7 @@ func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer d
 	if matrix.NeedsQUIC && !quicIncluded {
 		return nil, C.ErrQUICNotIncluded
 	}
-	credentials, err := wire.NewCredentials(next.Password)
+	credentials, err := wire.NewCredentials(nextKey)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +255,8 @@ func newPortalUpstream(ctx context.Context, logger log.ContextLogger, observer d
 			MaxVersion: "1.3",
 		},
 		pin:            pin,
-		morphSharedKey: MorphSharedKey(morph, next.Password),
+		morphSharedKey: MorphSharedKey(morph, nextKey),
+		dialerOptions:  dialerOptions,
 		observer:       observer,
 	})
 	if err != nil {

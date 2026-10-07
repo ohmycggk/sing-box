@@ -11,7 +11,7 @@ icon: material/new-box
 
   "server": "example.com",
   "server_port": 2077,
-  "password": "secret",
+  "password": "0123456789abcdef0123456789abcdef",
   "up": "udp",
   "down": "udp",
   "morph": false,
@@ -27,16 +27,15 @@ icon: material/new-box
 Nowhere outbound is the SingBox client for the Nowhere protocol. Upload and
 download carriers are selected independently via `up` / `down`.
 
-This is a Nowhere 2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
+This is a Nowhere 2.2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
 only and does not interoperate with legacy 1.8 peers. Authentication is an
 exporter-bound AuthFrame, the FlowHeader is 5 bytes and carries a HOPS
 forwarding budget of 0..7, TLS Mux is credit-windowed (`mux=0` dedicated
-lanes, `mux=1` marked shards), QUIC UDP headers are packed, and `mix` remains
-a client-side policy resolving to TT / TQ / QT / QQ.
+lanes, `mux=1` marked shards), and QUIC UDP headers are packed.
 
 `morph` enables the Nowhere 2 Morph keyed transform for every carrier of this
 endpoint. Morph is not negotiated in-band: `morph=1` must be enabled on both
-ends of a hop, because the Nowhere 2.1 Morph transform is wire-incompatible
+ends of a hop, because the Nowhere 2.2.1 Morph transform is wire-incompatible
 with the 2.0.x Morph.
 
 Nowhere 1.7 keeps the 1.5/1.6 authentication and direct-flow data plane. This
@@ -63,15 +62,16 @@ The server port.
 
 Shared key. Must match the inbound `password`.
 
+As a client this endpoint is lenient: the key accepts 1–255
+URL-percent-decoded bytes and applies no character rule. The Portal side is
+stricter — 32–64 lowercase hexadecimal characters — see the
+[Nowhere inbound](/configuration/inbound/nowhere/) `password` field.
+
 #### up, down
 
-Carrier selectors: `"tcp"`, `"udp"`, or `"mix"`.
+Carrier selectors: `"tcp"` or `"udp"`.
 
 Both must be set, or both omitted (default `udp` / `udp`).
-`mix` is a client-side policy resolved per flow before FlowHeader.
-`mix/mix` resolves only to `tcp/tcp` or `udp/udp`. A one-sided mix can resolve
-to a split pair. The primary pair has a one-second preparation budget, then the
-other allowed pair is tried once with a new flow ID.
 
 | Matrix | TCP traffic | UDP traffic | Notes |
 | --- | --- | --- | --- |
@@ -79,9 +79,8 @@ other allowed pair is tried once with a new flow ID.
 | `udp` / `udp` | One QUIC stream | QUIC DATAGRAM | Requires `with_quic`. `mux=1` canonicalizes to `0`. |
 | `tcp` / `udp` | TLS upload + QUIC download | UoT upload + DATAGRAM download | Asymmetric; requires `with_quic`. |
 | `udp` / `tcp` | QUIC upload + TLS download | DATAGRAM upload + UoT download | Asymmetric; requires `with_quic`. |
-| `mix` / `mix` | Per-flow `tcp/tcp` or `udp/udp` | Same as the resolved pair | Client policy; requires `with_quic`. |
 
-Any matrix that can select QUIC (`udp` or `mix`) forces `pool=0`. A non-zero
+Any matrix that can select QUIC (`udp`) forces `pool=0`. A non-zero
 configured value is normalized to zero and reported once as a configuration
 warning.
 
@@ -91,12 +90,8 @@ return `QUIC is not included in this build`.
 #### mux
 
 TLS lane framing. `0` (default) uses dedicated TLS lanes; `1` enables marked Mux
-shards. Mux applies when either direction is `tcp` or `mix`. `udp/udp&mux=1`
+shards. Mux applies when either direction is `tcp`. `udp/udp&mux=1`
 canonicalizes to `0`.
-
-#### mix_fallback_timeout
-
-Primary mix-route preparation budget. Omitted or `0` uses `1s`.
 
 #### pool
 
@@ -117,10 +112,15 @@ a 64-byte random TCP prelude is sent below TLS before authentication, and
 directional ChaCha20 keys derived from the shared key wrap traffic below both
 TLS and QUIC. Default: `false`.
 
+The TCP prelude policy is `full8` by default (all eight bits of each prelude
+byte are random). Set the `NOW_MORPH_TCP_PRELUDE` environment variable to
+`low7` for the older policy that clears each byte's high bit; a set-but-empty
+value is rejected. Both ends of a hop must use the same policy.
+
 There is no in-band negotiation. `morph` must be enabled on both ends of a hop
-(client and Portal, or Portal and next Portal), and the Nowhere 2.1 Morph
+(client and Portal, or Portal and next Portal), and the Nowhere 2.2.1 Morph
 transform is wire-incompatible with the 2.0.x Morph, so every peer on a
-`morph=1` hop must run Nowhere 2.1.
+`morph=1` hop must run Nowhere 2.2.1.
 
 #### max_concurrent_dials
 
@@ -162,6 +162,12 @@ different controllers.
 ### Dial Fields
 
 See [Dial Fields](/configuration/shared/dial/) for details.
+
+The shared `inet4_bind_address` / `inet6_bind_address` fields bind the source
+address per address family for this outbound. They are the sing-box equivalent
+of the Rust `dial` parameter and are mutually exclusive with the Rust `dial4` /
+`dial6` pair, which this build exposes only on the inbound `next` hop (see
+[Nowhere inbound](/configuration/inbound/nowhere/#next)).
 
 ### QUIC Fields
 

@@ -179,7 +179,7 @@ func (s *Server) serveTCP(ctx context.Context, listener net.Listener) error {
 			default:
 			}
 			var netErr net.Error
-			if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+			if errors.As(err, &netErr) && netErr.Timeout() {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
