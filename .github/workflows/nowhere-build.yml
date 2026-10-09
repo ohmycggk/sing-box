@@ -92,6 +92,7 @@ jobs:
           # badlinkname reaches into unexported crypto/tls internals. Go 1.25
           # rejects that linkname, while the portable badtls implementation is
           # sufficient for Nowhere's cross-platform artifacts.
+          # Traffic stats need with_v2ray_api; without it the core rolls back at run time.
           build_tags=()
           while IFS= read -r tag; do
             case "$tag" in
@@ -99,6 +100,7 @@ jobs:
               *) build_tags+=("$tag") ;;
             esac
           done < <(tr ',' '\n' < release/DEFAULT_BUILD_TAGS_OTHERS)
+          build_tags+=(with_v2ray_api)
           (IFS=,; echo "BUILD_TAGS=${build_tags[*]}") >> "$GITHUB_ENV"
           echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
 
