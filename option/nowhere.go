@@ -5,12 +5,13 @@ import (
 )
 
 // NowhereOutboundOptions is the SingBox Nowhere client configuration.
-// Version selects the protocol stack: 2 (default) is Nowhere 2 (nw2) and keeps
-// every legacy field below meaningful; 3 is Nowhere 3 (nw3), which speaks only
-// ALPN nw3, uses exactly one carrier, requires a 32-character lowercase hex
-// key, and turns Morph on by default. The two stacks share no handshake, so a
-// single endpoint runs exactly one version and nw2-only fields are rejected
-// when Version is 3.
+// Nowhere 3 (nw3) is the default stack: it speaks only ALPN nw3, uses exactly
+// one transport selected by net, requires a 32-character lowercase hex key, and
+// turns Morph on by default. Nowhere 2 (nw2) is the legacy stack kept for
+// compatibility with pre-nw3 peers: select it by setting tls.alpn to a single
+// non-nw3 value (conventionally "nw2"), which keeps every legacy field below
+// meaningful. The two stacks share no handshake, so a single endpoint runs
+// exactly one stack and the fields of the other stack are rejected.
 type NowhereOutboundOptions struct {
 	DialerOptions
 	ServerOptions
@@ -22,7 +23,7 @@ type NowhereOutboundOptions struct {
 	Down string `json:"down,omitempty"`
 	Mux  *int   `json:"mux,omitempty"`
 	Pool *int   `json:"pool,omitempty"`
-	// Morph enables the keyed transport transform for every carrier of this
+	// Morph enables the keyed transport transform for every transport of this
 	// endpoint (64-byte TCP prelude below TLS, directional ChaCha20 keys below
 	// QUIC). There is no negotiation: both ends of a hop must agree. Nowhere 2
 	// defaults to off; Nowhere 3 defaults to on.
@@ -32,11 +33,10 @@ type NowhereOutboundOptions struct {
 	WarmBackoffInitial    badoption.Duration `json:"warm_backoff_initial,omitempty"`
 	WarmBackoffMax        badoption.Duration `json:"warm_backoff_max,omitempty"`
 	QUICCongestionControl string             `json:"quic_congestion_control,omitempty"`
-	// Version selects the Nowhere protocol stack (2 or 3). Empty means 2.
-	Version int `json:"version,omitempty"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or
-	// quic. Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
-	Carrier string `json:"carrier,omitempty"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp. It is a Nowhere 3 field: the nw2 stack selects
+	// its transports via up/down instead and rejects net.
+	Net string `json:"net,omitempty"`
 	OutboundTLSOptionsContainer
 	QUICOptions
 }
@@ -70,14 +70,16 @@ type NowhereNextOptions struct {
 
 // NowhereInboundOptions is the SingBox Nowhere Portal configuration.
 // TLS is always the native SingBox TLS object; plaintext and historical
-// numeric tls/crt/key compatibility forms are not accepted. Version selects
-// the protocol stack: 2 (default) keeps next chaining and the up/down/mux
-// matrix; 3 is Nowhere 3 (nw3), which serves ALPN nw3 only, accepts one Egress
-// registration when Egress is set, and rejects the nw2-only fields.
+// numeric tls/crt/key compatibility forms are not accepted. Nowhere 3 (nw3) is
+// the default stack: it serves ALPN nw3 only, selects its single transport via
+// net, and rejects the nw2-only fields. Nowhere 2 (nw2) is the legacy stack
+// kept for compatibility: select it by setting tls.alpn to a single non-nw3
+// value (conventionally "nw2"), which keeps next chaining and the up/down/mux
+// matrix meaningful.
 type NowhereInboundOptions struct {
 	ListenOptions
 	Password string `json:"password,omitempty"`
-	// Morph enables the keyed transport transform for every carrier of this
+	// Morph enables the keyed transport transform for every transport of this
 	// endpoint. There is no negotiation: clients must use the same setting.
 	// Nowhere 2 defaults to off; Nowhere 3 defaults to on.
 	Morph                         *bool               `json:"morph,omitempty"`
@@ -86,14 +88,13 @@ type NowhereInboundOptions struct {
 	MaxUnauthenticatedConnections *int                `json:"max_unauthenticated_connections,omitempty"`
 	MaxUnauthenticatedPerSource   *int                `json:"max_unauthenticated_per_source,omitempty"`
 	Next                          *NowhereNextOptions `json:"next,omitempty"`
-	// Version selects the Nowhere protocol stack (2 or 3). Empty means 2.
-	Version int `json:"version,omitempty"`
-	// Carrier selects the single Nowhere 3 transport: tcp (TLS over TCP) or
-	// quic. Empty means tcp. Nowhere 2 ignores it and uses up/down instead.
-	Carrier string `json:"carrier,omitempty"`
+	// Net selects the single Nowhere 3 transport: tcp (TLS over TCP) or udp
+	// (QUIC). Empty means tcp. It is a Nowhere 3 field: the nw2 stack selects
+	// its transports via network instead and rejects net.
+	Net string `json:"net,omitempty"`
 	// Egress turns the Nowhere 3 Portal into an exit bridge: it accepts a
 	// single Egress registration over QUIC and forwards every authenticated
-	// flow to that exit instead of the local router. Requires the udp network.
+	// flow to that exit instead of the local router. Requires net udp.
 	Egress bool `json:"egress,omitempty"`
 	InboundTLSOptionsContainer
 	QUICOptions

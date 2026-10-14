@@ -80,7 +80,7 @@ func NewEgressInbound(ctx context.Context, router adapter.Router, logger log.Con
 		return nil, err
 	}
 	var morphKeys *morph.Keys
-	if resolveNowhereMorph(options.Morph, nowhereVersion3) {
+	if resolveNowhereMorph(options.Morph, nowhereStackNw3) {
 		keys := nowhereV3MorphKeys(options.Password)
 		morphKeys = &keys
 	}

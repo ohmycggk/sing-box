@@ -81,12 +81,15 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereInboundOptions) (adapter.Inbound, error) {
-	version, err := resolveNowhereVersion(options.Version)
+	stack, err := resolveNowhereStack(nowhereInboundALPN(&options))
 	if err != nil {
 		return nil, err
 	}
-	if version == nowhereVersion3 {
+	if stack == nowhereStackNw3 {
 		return NewInboundV3(ctx, router, logger, tag, options)
+	}
+	if err := validateNowhereNw2InboundOptions(&options); err != nil {
+		return nil, err
 	}
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
@@ -142,7 +145,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		config:    cfg,
 		enableTCP: cfg.TCPEnabled(),
 		enableUDP: cfg.UDPEnabled(),
-		morphKey:  MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereVersion2), options.Password),
+		morphKey:  MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereStackNw2), options.Password),
 	}
 	if options.Next != nil {
 		nextMorph := resolveNextMorph(common.PtrValueOrDefault(options.Morph), options.Next)

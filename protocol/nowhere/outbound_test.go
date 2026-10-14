@@ -71,7 +71,7 @@ func TestNewOutboundRejectsUnknownQUICCongestionControlForTCPOnly(t *testing.T) 
 		Down:                  "tcp",
 		QUICCongestionControl: "BBR",
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	require.ErrorContains(t, err, "unknown quic congestion control")
@@ -88,7 +88,7 @@ func TestNewOutboundAcceptsPoolWithinRustLimit(t *testing.T) {
 		Down:          "tcp",
 		Pool:          &pool,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestNewOutboundWarnsWhenPoolIsIgnoredForUDP(t *testing.T) {
 		Down:          "udp",
 		Pool:          &pool,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	require.NoError(t, err)

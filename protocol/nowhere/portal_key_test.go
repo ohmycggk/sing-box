@@ -74,7 +74,7 @@ func TestNewInboundRejectsShortPortalListenerKey(t *testing.T) {
 		Password: "secret",
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	if err == nil {
@@ -95,6 +95,7 @@ func TestNewInboundRejectsShortNextPortalKey(t *testing.T) {
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
 				Enabled:     true,
+				ALPN:        badoption.Listable[string]{"nw2"},
 				Certificate: badoption.Listable[string]{string(certPEM)},
 				Key:         badoption.Listable[string]{string(keyPEM)},
 			},

@@ -238,7 +238,7 @@ func TestNewInboundRejectsChainedPortalWithoutPassword(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{defaultALPN}},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
@@ -342,7 +342,7 @@ func TestNewInboundRejectsChainedPortalWithoutServer(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{defaultALPN}},
 		},
 		Next: &option.NowhereNextOptions{
 			Password: testOriginKey,
@@ -358,7 +358,7 @@ func TestNewInboundRejectsChainedPortalInvalidCarrier(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{defaultALPN}},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
@@ -377,7 +377,7 @@ func TestNewInboundAcceptsChainedPortalNoneServerNameAndPin(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{defaultALPN}},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
@@ -399,7 +399,7 @@ func TestNewInboundRejectsChainedPortalInvalidServerName(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{defaultALPN}},
 		},
 		Next: &option.NowhereNextOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},

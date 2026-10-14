@@ -195,12 +195,15 @@ func (p *carrierDialPlan) newBundle() (*bundle.CarrierBundle, error) {
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereOutboundOptions) (adapter.Outbound, error) {
-	version, err := resolveNowhereVersion(options.Version)
+	stack, err := resolveNowhereStack(nowhereOutboundALPN(&options))
 	if err != nil {
 		return nil, err
 	}
-	if version == nowhereVersion3 {
+	if stack == nowhereStackNw3 {
 		return NewOutboundV3(ctx, router, logger, tag, options)
+	}
+	if err := validateNowhereNw2OutboundOptions(&options); err != nil {
+		return nil, err
 	}
 	if options.Password == "" {
 		return nil, E.New("nowhere: missing password")
@@ -242,7 +245,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.MaxConcurrentDials != nil {
 		maxConcurrentDials = *options.MaxConcurrentDials
 	}
-	morphSharedKey := MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereVersion2), options.Password)
+	morphSharedKey := MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereStackNw2), options.Password)
 	plan, err := newCarrierDialPlan(ctx, logger, carrierDialOptions{
 		matrix:             matrix,
 		credentials:        credentials,

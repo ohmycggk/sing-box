@@ -21,14 +21,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// nowhereV3CarrierTCP and nowhereV3CarrierQUIC are the two Nowhere 3
-// transports. Nowhere 3 speaks exactly one of them per endpoint.
-const (
-	nowhereV3CarrierTCP  = "tcp"
-	nowhereV3CarrierQUIC = "quic"
-)
-
-// InboundV3 is the Nowhere 3 Portal. It serves one carrier with ALPN nw3 and
+// InboundV3 is the Nowhere 3 Portal. It serves one transport with ALPN nw3 and
 // TLS 1.3, applies the Nowhere 3 Morph transform when enabled, and either
 // routes authenticated flows through the sing-box router or bridges them to a
 // single registered Egress exit (egress mode).
@@ -40,7 +33,7 @@ type InboundV3 struct {
 
 	portal            *portal.Server
 	tlsConfig         *tls.Config
-	carrier           string
+	net               string
 	morph             bool
 	quicOptions       option.QUICOptions
 	congestionControl quicsettings.CongestionControl
@@ -63,17 +56,17 @@ func NewInboundV3(ctx context.Context, router adapter.Router, logger log.Context
 	if err := validateNowhereV3InboundOptions(&options); err != nil {
 		return nil, err
 	}
-	carrier, err := nowhereV3Carrier(options.Carrier)
+	transport, err := nowhereV3Net(options.Net)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateNowhereV3InboundNetworks(&options, carrier); err != nil {
+	if err := validateNowhereV3InboundNetworks(&options, transport); err != nil {
 		return nil, err
 	}
-	// The Egress registration handshake only exists on the QUIC carrier, so an
-	// exit bridge cannot be served over the TCP carrier.
-	if options.Egress && carrier != nowhereV3CarrierQUIC {
-		return nil, E.New("nowhere: version 3 egress mode requires the quic carrier")
+	// The Egress registration handshake only exists on the QUIC transport, so an
+	// exit bridge cannot be served over the TCP transport.
+	if options.Egress && transport != nowhereV3NetUDP {
+		return nil, E.New("nowhere: egress mode requires net udp")
 	}
 	if err := wire.ValidateServiceKey(options.Password); err != nil {
 		return nil, E.Cause(err, "nowhere: portal key")
@@ -92,7 +85,7 @@ func NewInboundV3(ctx context.Context, router adapter.Router, logger log.Context
 	}
 	portalServer, err := portal.New(portal.Config{
 		SharedKey: options.Password,
-		Morph:     resolveNowhereMorph(options.Morph, nowhereVersion3),
+		Morph:     resolveNowhereMorph(options.Morph, nowhereStackNw3),
 		TLS:       tlsConfig,
 		Upstream:  upstream,
 		Egress:    options.Egress,
@@ -101,7 +94,7 @@ func NewInboundV3(ctx context.Context, router adapter.Router, logger log.Context
 		return nil, err
 	}
 	networks := []string{N.NetworkTCP}
-	if carrier == nowhereV3CarrierQUIC {
+	if transport == nowhereV3NetUDP {
 		networks = []string{N.NetworkUDP}
 	}
 	return &InboundV3{
@@ -111,8 +104,8 @@ func NewInboundV3(ctx context.Context, router adapter.Router, logger log.Context
 		sharedKey:         options.Password,
 		portal:            portalServer,
 		tlsConfig:         tlsConfig,
-		carrier:           carrier,
-		morph:             resolveNowhereMorph(options.Morph, nowhereVersion3),
+		net:               transport,
+		morph:             resolveNowhereMorph(options.Morph, nowhereStackNw3),
 		quicOptions:       options.QUICOptions,
 		congestionControl: congestionControl,
 		listener: listener.New(listener.Options{
@@ -161,12 +154,12 @@ func (h *InboundV3) Start(stage adapter.StartStage) error {
 	return nil
 }
 
-// serve binds the carrier socket and hands it to the vendored Portal. The
+// serve binds the transport socket and hands it to the vendored Portal. The
 // Portal closes its own listener when serveCtx ends; the UDP socket stays
 // owned by the host because the QUIC transport only borrows it. serveDone is
 // always closed exactly once.
 func (h *InboundV3) serve(serveCtx context.Context, serveDone chan struct{}) error {
-	if h.carrier == nowhereV3CarrierTCP {
+	if h.net == nowhereV3NetTCP {
 		tcpListener, err := h.listener.ListenTCP()
 		if err != nil {
 			close(serveDone)
@@ -205,10 +198,10 @@ func (h *InboundV3) serve(serveCtx context.Context, serveDone chan struct{}) err
 	return nil
 }
 
-// InterfaceUpdated rebinds the QUIC carrier socket, mirroring the nw2 inbound's
+// InterfaceUpdated rebinds the QUIC transport socket, mirroring the nw2 inbound's
 // QUIC restart. The TCP listener is address-bound and needs no refresh.
 func (h *InboundV3) InterfaceUpdated(ctx context.Context) {
-	if h.carrier != nowhereV3CarrierQUIC {
+	if h.net != nowhereV3NetUDP {
 		return
 	}
 	h.lifecycleMu.Lock()

@@ -44,7 +44,7 @@ func TestQUICDisabledAllowsTCPOnlyInbound(t *testing.T) {
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
-				Enabled: true, Certificate: badoption.Listable[string]{string(certificatePEM)}, Key: badoption.Listable[string]{string(keyPEM)},
+				Enabled: true, ALPN: badoption.Listable[string]{"nw2"}, Certificate: badoption.Listable[string]{string(certificatePEM)}, Key: badoption.Listable[string]{string(keyPEM)},
 			},
 		},
 	})
@@ -59,7 +59,7 @@ func TestQUICDisabledRejectsUDPInbound(t *testing.T) {
 		Password: testPortalKey,
 		Network:  option.NetworkList(N.NetworkUDP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
-			TLS: &option.InboundTLSOptions{Enabled: true},
+			TLS: &option.InboundTLSOptions{Enabled: true, ALPN: badoption.Listable[string]{"nw2"}},
 		},
 	})
 	if !errors.Is(err, C.ErrQUICNotIncluded) {

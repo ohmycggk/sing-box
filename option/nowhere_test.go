@@ -93,14 +93,14 @@ func TestNowhereMorphJSON(t *testing.T) {
 		"server_port":2077,
 		"password":"secret"
 	}`), &outbound))
-	require.False(t, outbound.Morph)
+	require.Nil(t, outbound.Morph)
 	encoded, err := json.Marshal(outbound)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "morph")
 
 	var inbound NowhereInboundOptions
 	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret"}`), &inbound))
-	require.False(t, inbound.Morph)
+	require.Nil(t, inbound.Morph)
 	encoded, err = json.Marshal(inbound)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "morph")
@@ -112,14 +112,16 @@ func TestNowhereMorphJSON(t *testing.T) {
 		"password":"secret",
 		"morph":true
 	}`), &outboundMorph))
-	require.True(t, outboundMorph.Morph)
+	require.NotNil(t, outboundMorph.Morph)
+	require.True(t, *outboundMorph.Morph)
 	encoded, err = json.Marshal(outboundMorph)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), `"morph":true`)
 
 	var inboundMorph NowhereInboundOptions
 	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret","morph":true}`), &inboundMorph))
-	require.True(t, inboundMorph.Morph)
+	require.NotNil(t, inboundMorph.Morph)
+	require.True(t, *inboundMorph.Morph)
 	encoded, err = json.Marshal(inboundMorph)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), `"morph":true`)
@@ -135,7 +137,8 @@ func TestNowhereNextMorphInheritAndOverride(t *testing.T) {
 		"next":{"server":"origin.example","server_port":2080,"password":"origin-key"}
 	}`), &inherit))
 	require.NotNil(t, inherit.Next)
-	require.True(t, inherit.Morph)
+	require.NotNil(t, inherit.Morph)
+	require.True(t, *inherit.Morph)
 	require.Nil(t, inherit.Next.Morph)
 
 	var override NowhereInboundOptions
@@ -144,7 +147,8 @@ func TestNowhereNextMorphInheritAndOverride(t *testing.T) {
 		"morph":true,
 		"next":{"server":"origin.example","server_port":2080,"password":"origin-key","morph":false}
 	}`), &override))
-	require.True(t, override.Morph)
+	require.NotNil(t, override.Morph)
+	require.True(t, *override.Morph)
 	require.NotNil(t, override.Next)
 	require.NotNil(t, override.Next.Morph)
 	require.False(t, *override.Next.Morph)
@@ -199,4 +203,30 @@ func TestNowhereMuxJSON(t *testing.T) {
 	require.Equal(t, "tcp", options.Up)
 	require.NotNil(t, options.Mux)
 	require.Equal(t, 1, *options.Mux)
+}
+
+func TestNowhereNetJSON(t *testing.T) {
+	t.Parallel()
+	var outbound NowhereOutboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"server":"127.0.0.1",
+		"server_port":2077,
+		"password":"secret",
+		"net":"udp",
+		"tls":{"enabled":true,"insecure":true}
+	}`), &outbound))
+	require.Equal(t, "udp", outbound.Net)
+	encoded, err := json.Marshal(outbound)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), `"net":"udp"`)
+
+	var inbound NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret","net":"udp"}`), &inbound))
+	require.Equal(t, "udp", inbound.Net)
+
+	// The legacy nw2 stack is selected through tls.alpn; version and carrier no
+	// longer exist as fields.
+	var legacy NowhereInboundOptions
+	require.NoError(t, json.Unmarshal([]byte(`{"password":"secret","tls":{"enabled":true,"alpn":["nw2"]}}`), &legacy))
+	require.Equal(t, []string{"nw2"}, []string(legacy.TLS.ALPN))
 }

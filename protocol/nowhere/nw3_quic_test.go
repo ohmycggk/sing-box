@@ -36,8 +36,7 @@ func TestNowhereV3QUICForwarding(t *testing.T) {
 			ListenPort: listenPort,
 		},
 		Password: testNw3Key,
-		Version:  nowhereVersion3,
-		Carrier:  nowhereV3CarrierQUIC,
+		Net:      nowhereV3NetUDP,
 		Network:  option.NetworkList(N.NetworkUDP),
 		Morph:    common.Ptr(true),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
@@ -55,8 +54,7 @@ func TestNowhereV3QUICForwarding(t *testing.T) {
 	client, err := NewOutbound(context.Background(), router, logger, "nw3-quic-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: listenPort},
 		Password:      testNw3Key,
-		Version:       nowhereVersion3,
-		Carrier:       nowhereV3CarrierQUIC,
+		Net:           nowhereV3NetUDP,
 		Morph:         common.Ptr(true),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
@@ -116,8 +114,7 @@ func TestNowhereV3EgressRegistration(t *testing.T) {
 			ListenPort: listenPort,
 		},
 		Password: testNw3Key,
-		Version:  nowhereVersion3,
-		Carrier:  nowhereV3CarrierQUIC,
+		Net:      nowhereV3NetUDP,
 		Network:  option.NetworkList(N.NetworkUDP),
 		Egress:   true,
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
@@ -135,8 +132,7 @@ func TestNowhereV3EgressRegistration(t *testing.T) {
 	client, err := NewOutbound(context.Background(), nil, logger, "nw3-egress-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: listenPort},
 		Password:      testNw3Key,
-		Version:       nowhereVersion3,
-		Carrier:       nowhereV3CarrierQUIC,
+		Net:           nowhereV3NetUDP,
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
 		},

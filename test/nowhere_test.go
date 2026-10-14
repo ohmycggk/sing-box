@@ -19,7 +19,7 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/dialgate"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier/dialgate"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
@@ -732,6 +732,92 @@ func TestNowhereStressBaseline(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNowhereV3DefaultStackForwarding runs a full Nowhere 3 endpoint pair
+// through the box with no ALPN configured anywhere: both endpoints must select
+// the default nw3 stack and forward TCP flows end to end.
+func TestNowhereV3DefaultStackForwarding(t *testing.T) {
+	_, certPem, keyPem := createSelfSignedCertificate(t, "example.org")
+	instance := startInstance(t, option.Options{
+		Inbounds: []option.Inbound{
+			{
+				Type: C.TypeMixed,
+				Tag:  "mixed-in",
+				Options: &option.HTTPMixedInboundOptions{
+					ListenOptions: option.ListenOptions{
+						Listen:     common.Ptr(badoption.Addr(netip.IPv4Unspecified())),
+						ListenPort: clientPort,
+					},
+				},
+			},
+			{
+				Type: C.TypeNowhere,
+				Tag:  "nowhere-in",
+				Options: &option.NowhereInboundOptions{
+					ListenOptions: option.ListenOptions{
+						Listen:     common.Ptr(badoption.Addr(netip.IPv4Unspecified())),
+						ListenPort: serverPort,
+					},
+					Password: nowhereTestPortalKey,
+					Network:  option.NetworkList(N.NetworkTCP),
+					InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
+						TLS: &option.InboundTLSOptions{
+							Enabled:         true,
+							ServerName:      "example.org",
+							CertificatePath: certPem,
+							KeyPath:         keyPem,
+						},
+					},
+				},
+			},
+		},
+		Outbounds: []option.Outbound{
+			{
+				Type: C.TypeDirect,
+			},
+			{
+				Type: C.TypeNowhere,
+				Tag:  "nowhere-out",
+				Options: &option.NowhereOutboundOptions{
+					ServerOptions: option.ServerOptions{
+						Server:     "127.0.0.1",
+						ServerPort: serverPort,
+					},
+					Password: nowhereTestPortalKey,
+					Net:      "tcp",
+					OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
+						TLS: &option.OutboundTLSOptions{
+							Enabled:    true,
+							ServerName: "example.org",
+							Insecure:   true,
+						},
+					},
+				},
+			},
+		},
+		Route: &option.RouteOptions{
+			Rules: []option.Rule{
+				{
+					Type: C.RuleTypeDefault,
+					DefaultOptions: option.DefaultRule{
+						RawDefaultRule: option.RawDefaultRule{
+							Inbound: []string{"mixed-in"},
+						},
+						RuleAction: option.RuleAction{
+							Action: C.RuleActionTypeRoute,
+							RouteOptions: option.RouteActionOptions{
+								Outbound: "nowhere-out",
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	outbound, loaded := instance.Outbound().Outbound("nowhere-out")
+	require.True(t, loaded)
+	testNowhereSequentialTCP(t, outbound, 3)
 }
 
 func testNowhereMatrix(t *testing.T, up, down string, inboundNetwork option.NetworkList, congestionControl string, suit func(*testing.T, uint16, uint16)) {

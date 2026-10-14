@@ -23,9 +23,9 @@ import (
 	N "github.com/sagernet/sing/common/network"
 )
 
-// OutboundV3 is the Nowhere 3 Vector client. One endpoint speaks one carrier
+// OutboundV3 is the Nowhere 3 Vector client. One endpoint speaks one transport
 // toward one Portal; the vendored Vector performs the nw3 handshake on the
-// first flow (TLS carrier) or on the first dial (QUIC carrier) and multiplexes
+// first flow (TCP transport) or on the first dial (UDP transport) and multiplexes
 // every later flow over the same session.
 type OutboundV3 struct {
 	outbound.Adapter
@@ -45,7 +45,7 @@ func NewOutboundV3(ctx context.Context, router adapter.Router, logger log.Contex
 	if err := validateNowhereV3OutboundOptions(&options); err != nil {
 		return nil, err
 	}
-	carrier, err := nowhereV3Carrier(options.Carrier)
+	transport, err := nowhereV3Net(options.Net)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func NewOutboundV3(ctx context.Context, router adapter.Router, logger log.Contex
 	if err != nil {
 		return nil, err
 	}
-	morphEnabled := resolveNowhereMorph(options.Morph, nowhereVersion3)
+	morphEnabled := resolveNowhereMorph(options.Morph, nowhereStackNw3)
 	var morphKeys *morph.Keys
 	if morphEnabled {
 		keys := nowhereV3MorphKeys(options.Password)
@@ -73,7 +73,7 @@ func NewOutboundV3(ctx context.Context, router adapter.Router, logger log.Contex
 		PortalAddr: server.String(),
 		TLS:        tlsConfig,
 	}
-	if carrier == nowhereV3CarrierTCP {
+	if transport == nowhereV3NetTCP {
 		portalDialer, err := dialer.NewWithOptions(dialer.Options{
 			Context:        ctx,
 			Options:        options.DialerOptions,
@@ -154,7 +154,7 @@ func (o *OutboundV3) ListenPacket(ctx context.Context, destination M.Socksaddr) 
 // InterfaceUpdated drops the cached QUIC session so the next flow re-dials the
 // Portal; the vendored Vector rebuilds it on its own after a Close. The client
 // reference itself must survive: getClient treats a nil one as closed, and the
-// TCP carrier dials every flow through this same client, so dropping it here
+// TCP transport dials every flow through this same client, so dropping it here
 // would leave the outbound permanently unable to open flows.
 func (o *OutboundV3) InterfaceUpdated(ctx context.Context) {
 	o.mu.Lock()

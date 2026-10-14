@@ -26,50 +26,65 @@ import (
 // stacks have different key rules and must not be mixed.
 const testNw3Key = "0f1e2d3c4b5a69788796a5b4c3d2e1f0"
 
-func TestResolveNowhereVersion(t *testing.T) {
+func TestResolveNowhereStack(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
-		raw     int
-		version int
+		alpn  []string
+		stack nowhereStack
 	}{
-		{0, nowhereVersion2},
-		{nowhereVersion2, nowhereVersion2},
-		{nowhereVersion3, nowhereVersion3},
+		{nil, nowhereStackNw3},
+		{[]string{""}, nowhereStackNw3},
+		{[]string{"nw3"}, nowhereStackNw3},
+		{[]string{"nw2"}, nowhereStackNw2},
+		{[]string{"custom/1"}, nowhereStackNw2},
 	} {
-		version, err := resolveNowhereVersion(testCase.raw)
+		stack, err := resolveNowhereStack(badoption.Listable[string](testCase.alpn))
 		require.NoError(t, err)
-		require.Equal(t, testCase.version, version)
+		require.Equal(t, testCase.stack, stack)
 	}
-	for _, raw := range []int{1, 4, -1} {
-		_, err := resolveNowhereVersion(raw)
-		require.ErrorContains(t, err, "version must be 2 or 3")
-	}
+	_, err := resolveNowhereStack(badoption.Listable[string]{"nw2", "nw3"})
+	require.ErrorContains(t, err, "exactly one ALPN")
 }
 
 func TestResolveNowhereMorph(t *testing.T) {
 	t.Parallel()
-	require.False(t, resolveNowhereMorph(nil, nowhereVersion2))
-	require.True(t, resolveNowhereMorph(nil, nowhereVersion3))
-	require.True(t, resolveNowhereMorph(common.Ptr(true), nowhereVersion2))
-	require.False(t, resolveNowhereMorph(common.Ptr(false), nowhereVersion3))
+	require.False(t, resolveNowhereMorph(nil, nowhereStackNw2))
+	require.True(t, resolveNowhereMorph(nil, nowhereStackNw3))
+	require.True(t, resolveNowhereMorph(common.Ptr(true), nowhereStackNw2))
+	require.False(t, resolveNowhereMorph(common.Ptr(false), nowhereStackNw3))
 }
 
-func TestNowhereV3Carrier(t *testing.T) {
+func TestNowhereV3Net(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
-		raw     string
-		carrier string
+		raw string
+		net string
 	}{
-		{"", nowhereV3CarrierTCP},
-		{"tcp", nowhereV3CarrierTCP},
-		{"quic", nowhereV3CarrierQUIC},
+		{"", nowhereV3NetTCP},
+		{"tcp", nowhereV3NetTCP},
+		{"udp", nowhereV3NetUDP},
 	} {
-		carrier, err := nowhereV3Carrier(testCase.raw)
+		net, err := nowhereV3Net(testCase.raw)
 		require.NoError(t, err)
-		require.Equal(t, testCase.carrier, carrier)
+		require.Equal(t, testCase.net, net)
 	}
-	_, err := nowhereV3Carrier("ws")
-	require.ErrorContains(t, err, "carrier must be tcp or quic")
+	_, err := nowhereV3Net("quic")
+	require.ErrorContains(t, err, "net must be tcp or udp")
+}
+
+func TestValidateNowhereNw2RejectsNowhere3Fields(t *testing.T) {
+	t.Parallel()
+	require.ErrorContains(t, validateNowhereNw2OutboundOptions(&option.NowhereOutboundOptions{
+		Net: "tcp",
+	}), "net is a Nowhere 3 field")
+	require.NoError(t, validateNowhereNw2OutboundOptions(&option.NowhereOutboundOptions{}))
+	require.ErrorContains(t, validateNowhereNw2InboundOptions(&option.NowhereInboundOptions{
+		Net: "udp",
+	}), "net is a Nowhere 3 field")
+	require.ErrorContains(t, validateNowhereNw2InboundOptions(&option.NowhereInboundOptions{
+		Egress: true,
+	}), "egress is a Nowhere 3 field")
+	require.NoError(t, validateNowhereNw2InboundOptions(&option.NowhereInboundOptions{}))
 }
 
 func TestValidateNowhereV3InboundOptions(t *testing.T) {
@@ -88,22 +103,22 @@ func TestValidateNowhereV3InboundOptions(t *testing.T) {
 
 func TestValidateNowhereV3InboundNetworks(t *testing.T) {
 	t.Parallel()
-	require.NoError(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{}, nowhereV3CarrierTCP))
+	require.NoError(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{}, nowhereV3NetTCP))
 	require.NoError(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{
 		Network: option.NetworkList(N.NetworkTCP),
-	}, nowhereV3CarrierTCP))
+	}, nowhereV3NetTCP))
 	require.NoError(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{
 		Network: option.NetworkList(N.NetworkUDP),
-	}, nowhereV3CarrierQUIC))
+	}, nowhereV3NetUDP))
 	require.ErrorContains(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{
 		Network: option.NetworkList(N.NetworkUDP),
-	}, nowhereV3CarrierTCP), "implies network tcp")
+	}, nowhereV3NetTCP), "implies network tcp")
 	require.ErrorContains(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{
 		Network: option.NetworkList(N.NetworkTCP),
-	}, nowhereV3CarrierQUIC), "implies network udp")
+	}, nowhereV3NetUDP), "implies network udp")
 	require.ErrorContains(t, validateNowhereV3InboundNetworks(&option.NowhereInboundOptions{
 		Network: option.NetworkList("tcp,udp"),
-	}, nowhereV3CarrierTCP), "implies network tcp")
+	}, nowhereV3NetTCP), "implies network tcp")
 }
 
 func TestValidateNowhereV3OutboundOptions(t *testing.T) {
@@ -142,23 +157,18 @@ func TestNewInboundV3RejectsUnsupportedFields(t *testing.T) {
 				ListenPort: chainTestFreePort(t),
 			},
 			Password:                   testNw3Key,
-			Version:                    nowhereVersion3,
 			InboundTLSOptionsContainer: tlsContainer,
 		}
 	}
 	for name, mutate := range map[string]func(*option.NowhereInboundOptions){
-		"version":       func(o *option.NowhereInboundOptions) { o.Version = 5 },
-		"carrier":       func(o *option.NowhereInboundOptions) { o.Carrier = "ws" },
+		"net":           func(o *option.NowhereInboundOptions) { o.Net = "ws" },
 		"key":           func(o *option.NowhereInboundOptions) { o.Password = "xyz" },
 		"key-length":    func(o *option.NowhereInboundOptions) { o.Password = "0123456789abcdef0123456789abcdef01234567" },
 		"next":          func(o *option.NowhereInboundOptions) { o.Next = &option.NowhereNextOptions{} },
 		"max-unauth":    func(o *option.NowhereInboundOptions) { o.MaxUnauthenticatedConnections = common.Ptr(1) },
 		"network":       func(o *option.NowhereInboundOptions) { o.Network = option.NetworkList(N.NetworkUDP) },
 		"egress-on-tcp": func(o *option.NowhereInboundOptions) { o.Egress = true },
-		"tls-alpn": func(o *option.NowhereInboundOptions) {
-			o.TLS.ALPN = badoption.Listable[string]{"nw3"}
-		},
-		"tls-version": func(o *option.NowhereInboundOptions) { o.TLS.MinVersion = "1.2" },
+		"tls-version":   func(o *option.NowhereInboundOptions) { o.TLS.MinVersion = "1.2" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -176,15 +186,13 @@ func TestNewOutboundV3RejectsUnsupportedFields(t *testing.T) {
 		return option.NowhereOutboundOptions{
 			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
 			Password:      testNw3Key,
-			Version:       nowhereVersion3,
 			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 				TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
 			},
 		}
 	}
 	for name, mutate := range map[string]func(*option.NowhereOutboundOptions){
-		"version":        func(o *option.NowhereOutboundOptions) { o.Version = 5 },
-		"carrier":        func(o *option.NowhereOutboundOptions) { o.Carrier = "ws" },
+		"net":            func(o *option.NowhereOutboundOptions) { o.Net = "ws" },
 		"password":       func(o *option.NowhereOutboundOptions) { o.Password = "" },
 		"key":            func(o *option.NowhereOutboundOptions) { o.Password = "xyz" },
 		"key-length":     func(o *option.NowhereOutboundOptions) { o.Password = "0123456789abcdef0123456789abcdef01234567" },
@@ -196,9 +204,6 @@ func TestNewOutboundV3RejectsUnsupportedFields(t *testing.T) {
 		"max-concurrent": func(o *option.NowhereOutboundOptions) { o.MaxConcurrentDials = common.Ptr(1) },
 		"warm-backoff":   func(o *option.NowhereOutboundOptions) { o.WarmBackoffInitial = badoption.Duration(time.Second) },
 		"tls-missing":    func(o *option.NowhereOutboundOptions) { o.TLS = nil },
-		"tls-alpn": func(o *option.NowhereOutboundOptions) {
-			o.TLS.ALPN = badoption.Listable[string]{"nw3"}
-		},
 		"tls-reality": func(o *option.NowhereOutboundOptions) {
 			o.TLS.Reality = &option.OutboundRealityOptions{}
 		},
@@ -213,8 +218,75 @@ func TestNewOutboundV3RejectsUnsupportedFields(t *testing.T) {
 	}
 }
 
+func TestNewOutboundDispatchesStackByALPN(t *testing.T) {
+	t.Parallel()
+	logger := log.NewNOPFactory().Logger()
+	legacy := func() option.NowhereOutboundOptions {
+		return option.NowhereOutboundOptions{
+			ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: 2080},
+			Password:      "secret",
+			Up:            "tcp",
+			Down:          "tcp",
+			OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
+				TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true, ALPN: badoption.Listable[string]{"nw2"}},
+			},
+		}
+	}
+	out, err := NewOutbound(context.Background(), &nw3TestRouter{}, logger, "nw2", legacy())
+	require.NoError(t, err)
+	require.IsType(t, &Outbound{}, out)
+	require.NoError(t, out.(*Outbound).Close())
+
+	withNet := legacy()
+	withNet.Net = "tcp"
+	_, err = NewOutbound(context.Background(), &nw3TestRouter{}, logger, "nw2", withNet)
+	require.ErrorContains(t, err, "net is a Nowhere 3 field")
+}
+
+func TestNewInboundDispatchesStackByALPN(t *testing.T) {
+	t.Parallel()
+	logger := log.NewNOPFactory().Logger()
+	_, certPEM, keyPEM := chainTestKeyPair(t)
+	legacy := func() option.NowhereInboundOptions {
+		return option.NowhereInboundOptions{
+			ListenOptions: option.ListenOptions{
+				Listen:     common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1"))),
+				ListenPort: chainTestFreePort(t),
+			},
+			Password: testPortalKey,
+			Network:  option.NetworkList(N.NetworkTCP),
+			InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
+				TLS: &option.InboundTLSOptions{
+					Enabled:     true,
+					ALPN:        badoption.Listable[string]{"nw2"},
+					Certificate: badoption.Listable[string]{string(certPEM)},
+					Key:         badoption.Listable[string]{string(keyPEM)},
+				},
+			},
+		}
+	}
+	in, err := NewInbound(context.Background(), &nw3TestRouter{}, logger, "nw2", legacy())
+	require.NoError(t, err)
+	require.IsType(t, &Inbound{}, in)
+	require.NoError(t, in.Close())
+
+	withEgress := legacy()
+	withEgress.Egress = true
+	_, err = NewInbound(context.Background(), &nw3TestRouter{}, logger, "nw2", withEgress)
+	require.ErrorContains(t, err, "egress is a Nowhere 3 field")
+
+	// An omitted ALPN selects the default Nowhere 3 stack.
+	v3 := legacy()
+	v3.Password = testNw3Key
+	v3.TLS.ALPN = nil
+	v3Inbound, err := NewInbound(context.Background(), &nw3TestRouter{}, logger, "nw3", v3)
+	require.NoError(t, err)
+	require.IsType(t, &InboundV3{}, v3Inbound)
+	require.NoError(t, v3Inbound.Close())
+}
+
 // TestNowhereV3TCPForwarding runs a full Nowhere 3 endpoint pair over the TCP
-// carrier with Morph on (the v3 default): inbound Portal -> sing-box router ->
+// transport with Morph on (the v3 default): inbound Portal -> sing-box router ->
 // echo target and back, for TCP flows and for UDP flows carried over the TLS
 // connection as UoT.
 func TestNowhereV3TCPForwarding(t *testing.T) {
@@ -231,8 +303,7 @@ func TestNowhereV3TCPForwarding(t *testing.T) {
 			ListenPort: listenPort,
 		},
 		Password: testNw3Key,
-		Version:  nowhereVersion3,
-		Carrier:  nowhereV3CarrierTCP,
+		Net:      nowhereV3NetTCP,
 		Morph:    common.Ptr(true),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
@@ -249,8 +320,7 @@ func TestNowhereV3TCPForwarding(t *testing.T) {
 	client, err := NewOutbound(context.Background(), router, logger, "nw3-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: listenPort},
 		Password:      testNw3Key,
-		Version:       nowhereVersion3,
-		Carrier:       nowhereV3CarrierTCP,
+		Net:           nowhereV3NetTCP,
 		Morph:         common.Ptr(true),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
@@ -295,8 +365,8 @@ func TestNowhereV3TCPForwarding(t *testing.T) {
 // nil-client trap: InterfaceUpdated used to drop the cached client reference,
 // and getClient reports a nil one as net.ErrClosed, so the first network event
 // after startup killed every later flow. The vendored Vector rebuilds its QUIC
-// session on its own after Close, and the TCP carrier dials each flow through
-// the same client, so the reference has to survive the update.
+// session on its own after Close, and the TCP transport dials each flow
+// through the same client, so the reference has to survive the update.
 func TestOutboundV3InterfaceUpdatedKeepsDialing(t *testing.T) {
 	t.Parallel()
 	logger := log.NewNOPFactory().Logger()
@@ -311,8 +381,7 @@ func TestOutboundV3InterfaceUpdatedKeepsDialing(t *testing.T) {
 			ListenPort: listenPort,
 		},
 		Password: testNw3Key,
-		Version:  nowhereVersion3,
-		Carrier:  nowhereV3CarrierTCP,
+		Net:      nowhereV3NetTCP,
 		Morph:    common.Ptr(true),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
@@ -329,8 +398,7 @@ func TestOutboundV3InterfaceUpdatedKeepsDialing(t *testing.T) {
 	client, err := NewOutbound(context.Background(), router, logger, "nw3-client", option.NowhereOutboundOptions{
 		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: listenPort},
 		Password:      testNw3Key,
-		Version:       nowhereVersion3,
-		Carrier:       nowhereV3CarrierTCP,
+		Net:           nowhereV3NetTCP,
 		Morph:         common.Ptr(true),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},

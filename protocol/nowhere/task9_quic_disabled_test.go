@@ -35,7 +35,7 @@ func TestQUICDisabledTCPOnlyConstruction(t *testing.T) {
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
-				Enabled: true, Certificate: badoption.Listable[string]{string(certificatePEM)}, Key: badoption.Listable[string]{string(keyPEM)},
+				Enabled: true, ALPN: badoption.Listable[string]{"nw2"}, Certificate: badoption.Listable[string]{string(certificatePEM)}, Key: badoption.Listable[string]{string(keyPEM)},
 			},
 		},
 	})
