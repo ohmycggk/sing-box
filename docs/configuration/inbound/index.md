@@ -32,6 +32,7 @@
 | `vless`       | [VLESS](./vless/)             | TCP              |
 | `anytls`      | [AnyTLS](./anytls/)           | TCP              |
 | `nowhere`     | [Nowhere](./nowhere/)         | :material-close: |
+| `nowhere-egress` | [Nowhere Egress](./nowhere-egress/) | :material-close: |
 | `snell`       | [Snell](./snell/)             | TCP              |
 | `tun`         | [Tun](./tun/)                 | :material-close: |
 | `redirect`    | [Redirect](./redirect/)       | :material-close: |

@@ -27,6 +27,11 @@ icon: material/new-box
 Nowhere outbound is the SingBox client for the Nowhere protocol. Upload and
 download carriers are selected independently via `up` / `down`.
 
+Set `"version": 3` to run the Nowhere 3 (`nw3`) stack instead — see
+[Nowhere 3](#nowhere-3-nw3) below. The two stacks share no handshake: a single
+outbound runs exactly one version, and omitting `version` (or `"version": 2`)
+keeps every existing `nw2` configuration working unchanged.
+
 This is a Nowhere 2.2.1 (`nw2`) implementation. It negotiates the `nw2` ALPN
 only and does not interoperate with legacy 1.8 peers. Authentication is an
 exporter-bound AuthFrame, the FlowHeader is 5 bytes and carries a HOPS
@@ -154,6 +159,58 @@ Available values: `bbr`, `bbr_standard`, `bbr2`, `bbr2_variant`, `cubic`, and
 TCP-only carrier configurations. This setting only affects QUIC/UDP carriers
 and does not implement a bandwidth rate limit. The inbound and outbound may use
 different controllers.
+
+#### version
+
+Nowhere protocol stack. `2` (default) is Nowhere 2.2.1 (`nw2`); `3` is
+Nowhere 3 (`nw3`). Omitted or `0` means `2`.
+
+The stacks share no handshake, so a single outbound runs exactly one version.
+Any other value is rejected at construction time.
+
+#### carrier
+
+Nowhere 3 transport: `"tcp"` (TLS over TCP, UDP flows carried as UoT) or
+`"quic"` (QUIC/UDP, streams + DATAGRAM). Empty means `"tcp"`.
+
+Only meaningful with `"version": 3`; the `nw2` stack selects its carriers via
+`up` / `down` instead. `"quic"` requires the build tag `with_quic`.
+
+### Nowhere 3 (nw3)
+
+`"version": 3` selects the Nowhere 3 stack, a ground-up rewrite that shares no
+wire format with `nw2`. Differences from the fields above:
+
+| Aspect | Nowhere 3 behavior |
+| --- | --- |
+| ALPN | Pinned to `nw3`. `tls.alpn` is rejected. |
+| TLS version | Pinned to TLS 1.3. `tls.min_version` / `tls.max_version` are rejected. |
+| TLS stack | Standard library only. `tls.utls` / `tls.ech` / `tls.reality` are rejected. |
+| Key | Exactly 32 lowercase hex characters (`[0-9a-f]{32}`). The lenient `nw2` client rule (1–255 decoded bytes) does not apply. |
+| Morph | Defaults to **on**. An explicit `morph` still wins. The Nowhere 3 Morph transform uses a different derivation than `nw2`, so both ends of a hop must run the same version. |
+| Carriers | Exactly one per endpoint, selected by `carrier`. |
+| Rejected `nw2` fields | `up`, `down`, `mux`, `pool`, `prewarm_on_start`, `max_concurrent_dials`, `warm_backoff_initial`, `warm_backoff_max` are all rejected: Nowhere 3 speaks one carrier with fixed pooling. |
+
+Trust follows Nowhere 3: system roots plus the endpoint host name by default,
+`pin` overrides everything, and `insecure: true` skips verification.
+
+A minimal Nowhere 3 client over the QUIC carrier:
+
+```json
+{
+  "type": "nowhere",
+  "tag": "nw3-out",
+  "server": "example.com",
+  "server_port": 2077,
+  "password": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "version": 3,
+  "carrier": "quic",
+  "tls": {
+    "enabled": true,
+    "insecure": true
+  }
+}
+```
 
 ### Dial Fields
 

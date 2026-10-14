@@ -14,9 +14,9 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/sing-box/option"
-	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier/quic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/wire"
 	qtls "github.com/sagernet/sing-quic"
 	M "github.com/sagernet/sing/common/metadata"
 )

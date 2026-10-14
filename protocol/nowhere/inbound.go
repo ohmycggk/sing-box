@@ -14,8 +14,8 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
 	"github.com/sagernet/sing-box/protocol/nowhere/server"
 	"github.com/sagernet/sing/common"
@@ -81,6 +81,13 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereInboundOptions) (adapter.Inbound, error) {
+	version, err := resolveNowhereVersion(options.Version)
+	if err != nil {
+		return nil, err
+	}
+	if version == nowhereVersion3 {
+		return NewInboundV3(ctx, router, logger, tag, options)
+	}
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
 	}
@@ -135,10 +142,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		config:    cfg,
 		enableTCP: cfg.TCPEnabled(),
 		enableUDP: cfg.UDPEnabled(),
-		morphKey:  MorphSharedKey(options.Morph, options.Password),
+		morphKey:  MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereVersion2), options.Password),
 	}
 	if options.Next != nil {
-		nextMorph := resolveNextMorph(options.Morph, options.Next)
+		nextMorph := resolveNextMorph(common.PtrValueOrDefault(options.Morph), options.Next)
 		in.nextMorph = nextMorph
 		in.nextUpstream, err = newPortalUpstream(ctx, logger, observer, string(tlsOptions.ALPN[0]), nextMorph, options.Next)
 		if err != nil {

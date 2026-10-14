@@ -6,7 +6,7 @@ import (
 	"context"
 	"net"
 
-	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/carrier/quic"
+	nwquic "github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier/quic"
 
 	quic "github.com/sagernet/sing-box/protocol/nowhere/carrier/quic"
 )

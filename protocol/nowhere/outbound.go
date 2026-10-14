@@ -13,11 +13,11 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/diagnostic"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier/tcptls"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/diagnostic"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/wire"
 	"github.com/sagernet/sing-box/protocol/nowhere/internal/quicsettings"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -195,6 +195,13 @@ func (p *carrierDialPlan) newBundle() (*bundle.CarrierBundle, error) {
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.NowhereOutboundOptions) (adapter.Outbound, error) {
+	version, err := resolveNowhereVersion(options.Version)
+	if err != nil {
+		return nil, err
+	}
+	if version == nowhereVersion3 {
+		return NewOutboundV3(ctx, router, logger, tag, options)
+	}
 	if options.Password == "" {
 		return nil, E.New("nowhere: missing password")
 	}
@@ -235,7 +242,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.MaxConcurrentDials != nil {
 		maxConcurrentDials = *options.MaxConcurrentDials
 	}
-	morphSharedKey := MorphSharedKey(options.Morph, options.Password)
+	morphSharedKey := MorphSharedKey(resolveNowhereMorph(options.Morph, nowhereVersion2), options.Password)
 	plan, err := newCarrierDialPlan(ctx, logger, carrierDialOptions{
 		matrix:             matrix,
 		credentials:        credentials,

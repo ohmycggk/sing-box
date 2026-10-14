@@ -71,6 +71,7 @@ func InboundRegistry() *inbound.Registry {
 	vless.RegisterInbound(registry)
 	anytls.RegisterInbound(registry)
 	nowhere.RegisterInbound(registry)
+	nowhere.RegisterEgressInbound(registry)
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)

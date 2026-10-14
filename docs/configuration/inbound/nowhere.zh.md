@@ -45,6 +45,10 @@ SingBox 路由（除非通过 `next` 链式转发到另一个 Portal）。
 HOPS 转发预算；QUIC UDP 头为打包格式。AuthFrame 之后，入站 TLS 会自动识别
 专用通道（`mux=0`）与基于信用窗口的标记 Mux 分片（`mux=1`）。
 
+设置 `"version": 3` 可改用 Nowhere 3（`nw3`）协议栈——详见下文
+[Nowhere 3（nw3）](#nowhere-3-nw3)。两套协议栈没有共同握手：单个入站只能运行
+一个版本；省略 `version`（或 `"version": 2`）时所有既有 `nw2` 配置行为不变。
+
 `morph` 为本端点的所有 carrier 启用 Nowhere 2 Morph 密钥变换。Morph 不会在
 带内协商：跳的两端必须同时启用 `morph=1`，因为 Nowhere 2.2.1 的 Morph 变换与
 2.0.x Morph 线级不兼容。
@@ -92,6 +96,73 @@ Morph 不会在带内协商：`morph` 必须与客户端一致。链式转发时
 
 无 `with_quic` 时，启用 UDP 的配置会返回
 `QUIC is not included in this build`。
+
+在 `"version": 3` 下，carrier 由 `carrier` 字段选择；此时显式配置的 `network`
+只能填写该 carrier 对应的唯一传输（参阅 [Nowhere 3](#nowhere-3-nw3)）。
+
+#### version
+
+Nowhere 协议栈。`2`（默认）为 Nowhere 2.2.1（`nw2`）；`3` 为 Nowhere 3
+（`nw3`）。省略或为 `0` 时按 `2` 处理。
+
+两套协议栈没有共同握手，因此单个入站只能运行一个版本。其他取值会在构造入站时
+被拒绝。
+
+#### carrier
+
+Nowhere 3 传输：`"tcp"`（TLS over TCP，UDP 流量以 UoT 承载）或 `"quic"`
+（QUIC/UDP，stream + DATAGRAM）。为空时按 `"tcp"` 处理。
+
+仅在 `"version": 3` 下有意义；`nw2` 协议栈通过 `network`（入站）与 `up` /
+`down`（出站、链式 `next`）选择 carrier。
+
+`"quic"` 需要构建标签 `with_quic`。
+
+#### egress
+
+Nowhere 3 出口桥接模式。设为 `true` 时，Portal 不在本地路由流量：它通过 QUIC
+接受唯一的 [Nowhere Egress](/configuration/inbound/nowhere-egress/) 注册，
+并把所有已认证 flow 转发给该出口。
+
+需要 `"version": 3` 与 `"carrier": "quic"`——注册握手只存在于 QUIC carrier 上。
+
+### Nowhere 3（nw3）
+
+`"version": 3` 选择 Nowhere 3 协议栈。它是与 `nw2` 完全不同的一套线级格式，
+与上述字段的差异如下：
+
+| 方面 | Nowhere 3 行为 |
+| --- | --- |
+| ALPN | 固定为 `nw3`。配置 `tls.alpn` 会被拒绝。 |
+| TLS 版本 | 固定 TLS 1.3。配置 `tls.min_version` / `tls.max_version` 会被拒绝。 |
+| TLS 实现 | 仅标准库。`tls.utls` / `tls.ech` / `tls.reality` 会被拒绝；入站 `tls.acme` / `tls.certificate_provider` 会被拒绝（必须使用静态证书）。 |
+| 密钥 | 恰好 32 个 lowercase 十六进制字符（`[0-9a-f]{32}`）。`nw2` 的宽松规则（32–64、允许奇数长度）不适用。 |
+| Morph | 默认**开启**。显式配置 `morph` 仍然优先。Nowhere 3 的 Morph 变换与 `nw2` 使用不同派生，因此跳的两端必须运行相同版本。 |
+| Carrier | 每个端点恰好一个，由 `carrier` 选择。 |
+| 链式转发 | `next` 会被拒绝；Nowhere 3 没有原生 Portal 链式转发。 |
+| 准入上限 | `max_unauthenticated_connections` / `max_unauthenticated_per_source` 会被拒绝；内建 Portal 自行管理准入。 |
+| network | 显式配置的 `network` 必须与 carrier 的传输一致：`tcp` carrier 对应 `["tcp"]`，`quic` carrier 对应 `["udp"]`。 |
+
+一个最简的 TCP carrier Nowhere 3 Portal：
+
+```json
+{
+  "type": "nowhere",
+  "tag": "nw3-in",
+  "listen_port": 2080,
+  "password": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "version": 3,
+  "carrier": "tcp",
+  "tls": {
+    "enabled": true,
+    "certificate_path": "/path/cert.pem",
+    "key_path": "/path/key.pem"
+  }
+}
+```
+
+启动时 Portal 会打印叶子证书的 SHA-256 指纹，便于为对应的
+[出站](/configuration/outbound/nowhere/#nowhere-3-nw3) 获取 `pin=` 取值。
 
 #### max_unauthenticated_connections
 

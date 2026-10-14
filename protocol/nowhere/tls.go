@@ -10,7 +10,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 
-	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/wire"
 )
 
 // defaultALPN is the sole ALPN every Nowhere 2 carrier negotiates.

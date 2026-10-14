@@ -27,6 +27,7 @@ const (
 	TypeTUIC               = "tuic"
 	TypeHysteria2          = "hysteria2"
 	TypeNowhere            = "nowhere"
+	TypeNowhereEgress      = "nowhere-egress"
 	TypeOpenConnect        = "openconnect"
 	TypeOpenVPNClient      = "openvpn-client"
 	TypeOpenVPNServer      = "openvpn-server"
@@ -103,6 +104,8 @@ func ProxyDisplayName(proxyType string) string {
 		return "Hysteria2"
 	case TypeNowhere:
 		return "Nowhere"
+	case TypeNowhereEgress:
+		return "Nowhere Egress"
 	case TypeAnyTLS:
 		return "AnyTLS"
 	case TypeOpenConnect:

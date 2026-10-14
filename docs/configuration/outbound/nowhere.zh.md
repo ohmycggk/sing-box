@@ -27,6 +27,10 @@ icon: material/new-box
 Nowhere 出站是 SingBox 的 Nowhere 客户端。上传与下载 carrier 通过 `up` /
 `down` 独立选择。
 
+设置 `"version": 3` 可改用 Nowhere 3（`nw3`）协议栈——详见下文
+[Nowhere 3（nw3）](#nowhere-3-nw3)。两套协议栈没有共同握手：单个出站只能运行
+一个版本；省略 `version`（或 `"version": 2`）时所有既有 `nw2` 配置行为不变。
+
 这是 Nowhere 2.2.1（`nw2`）实现：仅协商 `nw2` ALPN，与旧版 1.8 端点不互通。
 认证使用绑定 TLS exporter 的 AuthFrame；FlowHeader 为 5 字节，携带 0..7 的
 HOPS 转发预算；TLS Mux 基于信用窗口（`mux=0` 专用通道，`mux=1` 标记分片）；
@@ -139,6 +143,58 @@ TLS 配置，参阅 [TLS](/zh/configuration/shared/tls/#出站)。
 可选值：`bbr`、`bbr_standard`、`bbr2`、`bbr2_variant`、`cubic`、`reno`。
 未知值会在构造出站时被拒绝，包括仅使用 TCP carrier 的配置。该配置只影响
 QUIC/UDP carrier，不提供带宽限速；入站和出站可以使用不同的控制器。
+
+### Nowhere 3（nw3）
+
+`"version": 3` 选择 Nowhere 3 协议栈。它是与 `nw2` 完全不同的一套线级格式，
+与上述字段的差异如下：
+
+| 方面 | Nowhere 3 行为 |
+| --- | --- |
+| ALPN | 固定为 `nw3`。配置 `tls.alpn` 会被拒绝。 |
+| TLS 版本 | 固定 TLS 1.3。配置 `tls.min_version` / `tls.max_version` 会被拒绝。 |
+| TLS 实现 | 仅标准库。`tls.utls` / `tls.ech` / `tls.reality` 会被拒绝。 |
+| 密钥 | 恰好 32 个 lowercase 十六进制字符（`[0-9a-f]{32}`）。`nw2` 客户端的宽松规则（解码后 1–255 字节）不适用。 |
+| Morph | 默认**开启**。显式配置 `morph` 仍然优先。Nowhere 3 的 Morph 变换与 `nw2` 使用不同派生，因此跳的两端必须运行相同版本。 |
+| Carrier | 每个端点恰好一个，由 `carrier` 选择。 |
+| 被拒绝的 `nw2` 字段 | `up`、`down`、`mux`、`pool`、`prewarm_on_start`、`max_concurrent_dials`、`warm_backoff_initial`、`warm_backoff_max` 全部会被拒绝：Nowhere 3 只使用单一 carrier，连接池策略固定。 |
+
+信任规则遵循 Nowhere 3：默认使用系统根证书与端点主机名；`pin` 优先于一切；
+`insecure: true` 跳过校验。
+
+#### version
+
+Nowhere 协议栈。`2`（默认）为 Nowhere 2.2.1（`nw2`）；`3` 为 Nowhere 3
+（`nw3`）。省略或为 `0` 时按 `2` 处理。
+
+两套协议栈没有共同握手，因此单个出站只能运行一个版本。其他取值会在构造出站时
+被拒绝。
+
+#### carrier
+
+Nowhere 3 传输：`"tcp"`（TLS over TCP，UDP 流量以 UoT 承载）或 `"quic"`
+（QUIC/UDP，stream + DATAGRAM）。为空时按 `"tcp"` 处理。
+
+仅在 `"version": 3` 下有意义；`nw2` 协议栈通过 `up` / `down` 选择 carrier。
+`"quic"` 需要构建标签 `with_quic`。
+
+一个最简的 QUIC carrier Nowhere 3 客户端：
+
+```json
+{
+  "type": "nowhere",
+  "tag": "nw3-out",
+  "server": "example.com",
+  "server_port": 2077,
+  "password": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "version": 3,
+  "carrier": "quic",
+  "tls": {
+    "enabled": true,
+    "insecure": true
+  }
+}
+```
 
 ### 拨号字段
 

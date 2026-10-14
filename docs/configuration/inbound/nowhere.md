@@ -48,6 +48,11 @@ forwarding budget of 0..7, and QUIC UDP headers are packed. After AuthFrame,
 inbound TLS auto-detects dedicated lanes (`mux=0`) versus credit-windowed
 marked Mux shards (`mux=1`).
 
+Set `"version": 3` to run the Nowhere 3 (`nw3`) stack instead — see
+[Nowhere 3](#nowhere-3-nw3) below. The two stacks share no handshake: a single
+inbound runs exactly one version, and omitting `version` (or `"version": 2`)
+keeps every existing `nw2` configuration working unchanged.
+
 `morph` enables the Nowhere 2 Morph keyed transform for every carrier of this
 endpoint. Morph is not negotiated in-band: `morph=1` must be enabled on both
 ends of a hop, because the Nowhere 2.2.1 Morph transform is wire-incompatible
@@ -101,6 +106,77 @@ Listen transports. Default: `["tcp", "udp"]`.
 
 Without `with_quic`, any configuration that enables UDP returns
 `QUIC is not included in this build`.
+
+Under `"version": 3` the carrier is selected by `carrier` instead, and an
+explicit `network` may only name that one transport (see
+[Nowhere 3](#nowhere-3-nw3)).
+
+#### version
+
+Nowhere protocol stack. `2` (default) is Nowhere 2.2.1 (`nw2`); `3` is
+Nowhere 3 (`nw3`). Omitted or `0` means `2`.
+
+The stacks share no handshake, so a single inbound runs exactly one version.
+Any other value is rejected at construction time.
+
+#### carrier
+
+Nowhere 3 transport: `"tcp"` (TLS over TCP, UDP flows carried as UoT) or
+`"quic"` (QUIC/UDP, streams + DATAGRAM). Empty means `"tcp"`.
+
+Only meaningful with `"version": 3`; the `nw2` stack selects its carriers via
+`network` (inbound) and `up` / `down` (outbound, chained `next`) instead.
+
+`"quic"` requires the build tag `with_quic`.
+
+#### egress
+
+Nowhere 3 exit-bridge mode. When `true`, the Portal does not route flows
+locally: it accepts a single
+[Nowhere Egress](/configuration/inbound/nowhere-egress/) registration over
+QUIC and forwards every authenticated flow to that exit.
+
+Requires `"version": 3` and `"carrier": "quic"` — the registration handshake
+only exists on the QUIC carrier.
+
+### Nowhere 3 (nw3)
+
+`"version": 3` selects the Nowhere 3 stack, a ground-up rewrite that shares no
+wire format with `nw2`. Differences from the fields above:
+
+| Aspect | Nowhere 3 behavior |
+| --- | --- |
+| ALPN | Pinned to `nw3`. `tls.alpn` is rejected. |
+| TLS version | Pinned to TLS 1.3. `tls.min_version` / `tls.max_version` are rejected. |
+| TLS stack | Standard library only. `tls.utls` / `tls.ech` / `tls.reality` are rejected; inbound `tls.acme` / `tls.certificate_provider` are rejected (a static certificate is required). |
+| Key | Exactly 32 lowercase hex characters (`[0-9a-f]{32}`). The lenient `nw2` rules (32–64, odd lengths) do not apply. |
+| Morph | Defaults to **on**. An explicit `morph` still wins. The Nowhere 3 Morph transform uses a different derivation than `nw2`, so both ends of a hop must run the same version. |
+| Carriers | Exactly one per endpoint, selected by `carrier`. |
+| Chaining | `next` is rejected; Nowhere 3 has no native Portal chaining. |
+| Admission limits | `max_unauthenticated_connections` / `max_unauthenticated_per_source` are rejected; the vendored Portal owns its own limits. |
+| Networks | An explicit `network` must equal the carrier's transport: `tcp` carrier implies `["tcp"]`, `quic` carrier implies `["udp"]`. |
+
+A minimal Nowhere 3 Portal over the TCP carrier:
+
+```json
+{
+  "type": "nowhere",
+  "tag": "nw3-in",
+  "listen_port": 2080,
+  "password": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "version": 3,
+  "carrier": "tcp",
+  "tls": {
+    "enabled": true,
+    "certificate_path": "/path/cert.pem",
+    "key_path": "/path/key.pem"
+  }
+}
+```
+
+On startup the Portal logs the leaf certificate's SHA-256 fingerprint so a
+`pin=` value can be obtained for the matching
+[outbound](/configuration/outbound/nowhere/#nowhere-3-nw3).
 
 #### max_unauthenticated_connections
 

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/bundle"
 )
 
 func TestResolveMatrixDefaultsAndPool(t *testing.T) {

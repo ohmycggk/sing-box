@@ -67,7 +67,7 @@ func startMorphTCPRelay(t *testing.T) (uint16, M.Socksaddr) {
 			ListenPort: relayPort,
 		},
 		Password: testRelayKey,
-		Morph:    true,
+		Morph:    common.Ptr(true),
 		Network:  option.NetworkList(N.NetworkTCP),
 		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 			TLS: &option.InboundTLSOptions{
@@ -100,7 +100,7 @@ func newMorphTCPClient(t *testing.T, relayPort uint16, morph bool) *Outbound {
 		Up:            "tcp",
 		Down:          "tcp",
 		Pool:          common.Ptr(0),
-		Morph:         morph,
+		Morph:         common.Ptr(morph),
 		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
 			TLS: &option.OutboundTLSOptions{
 				Enabled:  true,

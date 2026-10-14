@@ -3,9 +3,9 @@ package nowhere
 import (
 	"fmt"
 
-	"github.com/sagernet/sing-box/protocol/nowhere/core/bundle"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/carrier/tcptls"
-	"github.com/sagernet/sing-box/protocol/nowhere/core/wire"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/bundle"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/carrier/tcptls"
+	"github.com/sagernet/sing-box/protocol/nowhere/core/nw2/wire"
 )
 
 const (
