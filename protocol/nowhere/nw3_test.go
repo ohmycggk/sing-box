@@ -2,6 +2,7 @@ package nowhere
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/netip"
@@ -288,6 +289,86 @@ func TestNowhereV3TCPForwarding(t *testing.T) {
 
 	require.Equal(t, int64(1), router.tcpFlows.Load())
 	require.Equal(t, int64(1), router.udpFlows.Load())
+}
+
+// TestOutboundV3InterfaceUpdatedKeepsDialing guards the v3 outbound against the
+// nil-client trap: InterfaceUpdated used to drop the cached client reference,
+// and getClient reports a nil one as net.ErrClosed, so the first network event
+// after startup killed every later flow. The vendored Vector rebuilds its QUIC
+// session on its own after Close, and the TCP carrier dials each flow through
+// the same client, so the reference has to survive the update.
+func TestOutboundV3InterfaceUpdatedKeepsDialing(t *testing.T) {
+	t.Parallel()
+	logger := log.NewNOPFactory().Logger()
+	_, certPEM, keyPEM := chainTestKeyPair(t)
+	echo := startChainTestEcho(t)
+	router := &nw3TestRouter{target: echo}
+	listenPort := chainTestFreePort(t)
+
+	server, err := NewInbound(context.Background(), router, logger, "nw3-server", option.NowhereInboundOptions{
+		ListenOptions: option.ListenOptions{
+			Listen:     common.Ptr(badoption.Addr(netip.MustParseAddr("127.0.0.1"))),
+			ListenPort: listenPort,
+		},
+		Password: testNw3Key,
+		Version:  nowhereVersion3,
+		Carrier:  nowhereV3CarrierTCP,
+		Morph:    common.Ptr(true),
+		InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
+			TLS: &option.InboundTLSOptions{
+				Enabled:     true,
+				Certificate: badoption.Listable[string]{string(certPEM)},
+				Key:         badoption.Listable[string]{string(keyPEM)},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, server.Start(adapter.StartStateStart))
+	t.Cleanup(func() { _ = server.Close() })
+
+	client, err := NewOutbound(context.Background(), router, logger, "nw3-client", option.NowhereOutboundOptions{
+		ServerOptions: option.ServerOptions{Server: "127.0.0.1", ServerPort: listenPort},
+		Password:      testNw3Key,
+		Version:       nowhereVersion3,
+		Carrier:       nowhereV3CarrierTCP,
+		Morph:         common.Ptr(true),
+		OutboundTLSOptionsContainer: option.OutboundTLSOptionsContainer{
+			TLS: &option.OutboundTLSOptions{Enabled: true, Insecure: true},
+		},
+	})
+	require.NoError(t, err)
+	clientOutbound := client.(*OutboundV3)
+	t.Cleanup(func() { _ = clientOutbound.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	echoRoundTrip := func() error {
+		conn, err := client.DialContext(ctx, N.NetworkTCP, echo)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			return err
+		}
+		payload := []byte("nw3-iface")
+		if _, err := conn.Write(payload); err != nil {
+			return err
+		}
+		reply := make([]byte, len(payload))
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			return err
+		}
+		if string(reply) != string(payload) {
+			return fmt.Errorf("unexpected echo reply %q", reply)
+		}
+		return nil
+	}
+
+	require.NoError(t, echoRoundTrip())
+	clientOutbound.InterfaceUpdated(context.Background())
+	require.NoError(t, echoRoundTrip())
 }
 
 // nw3TestRouter routes every admitted flow to a fixed echo target, standing in

@@ -152,14 +152,15 @@ func (o *OutboundV3) ListenPacket(ctx context.Context, destination M.Socksaddr) 
 }
 
 // InterfaceUpdated drops the cached QUIC session so the next flow re-dials the
-// Portal; the vendored Vector re-dials on its own after a Close.
+// Portal; the vendored Vector rebuilds it on its own after a Close. The client
+// reference itself must survive: getClient treats a nil one as closed, and the
+// TCP carrier dials every flow through this same client, so dropping it here
+// would leave the outbound permanently unable to open flows.
 func (o *OutboundV3) InterfaceUpdated(ctx context.Context) {
 	o.mu.Lock()
 	client := o.client
-	o.client = nil
-	closed := o.closed
 	o.mu.Unlock()
-	if client != nil && !closed {
+	if client != nil {
 		if err := client.Close(); err != nil {
 			o.logger.Warn(E.Cause(err, "nowhere: close vector session after interface update"))
 		}
