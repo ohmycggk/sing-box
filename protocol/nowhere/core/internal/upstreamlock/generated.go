@@ -1,4 +1,4 @@
-// Code generated from UPSTREAM.lock by generate-upstream-lock-go.sh; DO NOT EDIT.
+// Code generated from UPSTREAM-nw2.lock by generate-upstream-lock-go.sh; DO NOT EDIT.
 
 package upstreamlock
 

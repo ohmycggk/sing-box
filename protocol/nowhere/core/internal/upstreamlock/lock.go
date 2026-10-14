@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-// Lock is the canonical JSON representation of UPSTREAM.lock.
+// Lock is the JSON representation shared by UPSTREAM.lock (nw3) and UPSTREAM-nw2.lock.
 type Lock struct {
 	Schema                  int    `json:"schema"`
 	Repository              string `json:"repository"`

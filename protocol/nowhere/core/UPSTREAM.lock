@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "repository": "https://github.com/NodePassProject/Nowhere",
-  "version": "2.2.1",
-  "commit": "0000696910dc9ee56c3ec87995a0b1ca8e4fc11b",
-  "protocol_sha256": "cc399b083a9eb3d36ee69bd4331470e73255f1a10a9068735db8187bb5b4b879",
+  "version": "3.0.0",
+  "commit": "501138f43a99cb5bbf40f45ee2a55cda5faf1c51",
+  "protocol_sha256": "2940c54f8bd299f724f0ed8d794b11bab215b5a1d0cc8502cdb77834d7013d6d",
   "vector_tree_hash_algorithm": "sha256-tree-v1",
-  "vector_tree_sha256": "25ba2152cd4480788853ad9b4f1f4d73e1daf6addebc0cb07696da5e40a48415"
+  "vector_tree_sha256": "c3015526cea27c26a5f5949290681e8f109339d087acf46faa8de76dee7f34f9"
 }
