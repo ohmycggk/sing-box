@@ -171,6 +171,11 @@ func buildNowhereV3ClientTLS(ctx context.Context, logger log.ContextLogger, serv
 	cfg.MaxVersion = tls.VersionTLS13
 	cfg.NextProtos = []string{wire.ALPN}
 	cfg.ClientSessionCache = nil
+	// singtls seeds ServerName from the raw server address, which includes the
+	// port. RFC 6066 forbids a port in the SNI host name and the Rust Portal's
+	// rustls acceptor rejects such a ClientHello before TLS ever starts, so
+	// normalize to the bare host for every verification mode.
+	cfg.ServerName = nowhereV3ServerName(server, tlsOptions.ServerName, tlsOptions.DisableSNI)
 	parsed, err := nw2wire.ParseCertificatePin(pin)
 	if err != nil {
 		return nil, err
