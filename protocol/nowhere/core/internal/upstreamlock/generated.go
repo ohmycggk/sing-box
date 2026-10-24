@@ -7,7 +7,7 @@ const (
 	Repository              = "https://github.com/NodePassProject/Nowhere"
 	Version                 = "2.2.1"
 	Commit                  = "0000696910dc9ee56c3ec87995a0b1ca8e4fc11b"
-	ProtocolSHA256          = "cc399b083a9eb3d36ee69bd4331470e73255f1a10a9068735db8187bb5b4b879"
+	ProtocolSHA256          = "786755c9fd16abef15af3e1dd363193921021948fa893901bae6fcf4e914321a"
 	VectorTreeHashAlgorithm = "sha256-tree-v1"
 	VectorTreeSHA256        = "25ba2152cd4480788853ad9b4f1f4d73e1daf6addebc0cb07696da5e40a48415"
 )

@@ -8,7 +8,8 @@ import (
 // MaxFlowID is the largest UDP flow identifier, 2^30-1.
 const MaxFlowID uint32 = 1<<30 - 1
 
-// FlowKind is the single FlowStart byte. Bits 1–7 must be zero.
+// FlowKind is the single FlowStart byte. Bit 0 is 0 for TCP and 1 for UDP.
+// Senders MUST set bits 1–7 to zero. Receivers MUST ignore them.
 type FlowKind uint8
 
 const (
@@ -18,14 +19,12 @@ const (
 	FlowUDP FlowKind = 1
 )
 
-// ParseFlowStart rejects any byte other than 0 or 1.
+// ParseFlowStart reads the flow type from bit 0 and ignores bits 1–7.
 func ParseFlowStart(b byte) (FlowKind, error) {
-	switch FlowKind(b) {
-	case FlowTCP, FlowUDP:
-		return FlowKind(b), nil
-	default:
-		return 0, errors.New("nw3: invalid FlowStart reserved bits")
+	if b&1 == 0 {
+		return FlowTCP, nil
 	}
+	return FlowUDP, nil
 }
 
 // ReadFlowStart reads one byte. EOF with no byte is a missing flow, not an error.

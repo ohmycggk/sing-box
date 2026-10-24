@@ -73,23 +73,36 @@ func (l Lock) MatchesGenerated() bool {
 
 // TreeHash implements sha256-tree-v1: sorted relative filename + NUL +
 // lowercase SHA-256(content) + LF, hashed again with SHA-256.
-func TreeHash(dir string) (string, error) {
+//
+// skip names top-level subdirectories to exclude, so the nw2 corpus directory
+// (which also holds the nw3 corpus under nw3/) hashes only its own files. Both
+// locks then share one semantics: sha256-tree-v1 over the files of their own
+// corpus.
+func TreeHash(dir string, skip ...string) (string, error) {
 	var names []string
+	skipSet := make(map[string]bool, len(skip))
+	for _, s := range skip {
+		skipSet[s] = true
+	}
 	if err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if !entry.Type().IsRegular() {
-			return fmt.Errorf("nowhere: vector tree contains non-regular file %s", path)
 		}
 		relative, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
 		}
-		names = append(names, filepath.ToSlash(relative))
+		rel := filepath.ToSlash(relative)
+		if entry.IsDir() {
+			if skipSet[rel] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("nowhere: vector tree contains non-regular file %s", path)
+		}
+		names = append(names, rel)
 		return nil
 	}); err != nil {
 		return "", err

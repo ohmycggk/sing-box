@@ -101,13 +101,34 @@ func TestVectors(t *testing.T) {
 	if _, err := ValidateAuthFrame(mustHex(t, doc.Auth[2].Frame), creds, AuthTLS, exporter); err == nil {
 		t.Fatal("egress tag must be rejected on TLS")
 	}
-	tcp, _ := ParseFlowStart(mustHex(t, doc.FlowStart.TCP)[0])
-	udp, _ := ParseFlowStart(mustHex(t, doc.FlowStart.UDP)[0])
-	if tcp != FlowTCP || udp != FlowUDP {
-		t.Fatalf("flow start %v %v", tcp, udp)
+	tcp, err := ParseFlowStart(mustHex(t, doc.FlowStart.TCP)[0])
+	if err != nil || tcp != FlowTCP {
+		t.Fatalf("tcp flow start %v %v", tcp, err)
 	}
-	if _, err := ParseFlowStart(0x02); err == nil {
-		t.Fatal("reserved flow start accepted")
+	udp, err := ParseFlowStart(mustHex(t, doc.FlowStart.UDP)[0])
+	if err != nil || udp != FlowUDP {
+		t.Fatalf("udp flow start %v %v", udp, err)
+	}
+	for b := 0; b <= 255; b++ {
+		kind, err := ParseFlowStart(byte(b))
+		if err != nil {
+			t.Fatalf("flow start %#x: %v", b, err)
+		}
+		want := FlowTCP
+		if b%2 != 0 {
+			want = FlowUDP
+		}
+		if kind != want {
+			t.Fatalf("flow start %#x = %v, want %v", b, kind, want)
+		}
+		rest := []byte{byte(b), 0x03}
+		got, ok, err := ReadFlowStart(bytes.NewReader(rest))
+		if err != nil || !ok || got != want {
+			t.Fatalf("read flow start %#x: %v %v %v", b, got, ok, err)
+		}
+	}
+	if _, ok, err := ReadFlowStart(bytes.NewReader(nil)); err != nil || ok {
+		t.Fatal("empty flow start is not an auth-only fin")
 	}
 	for _, row := range doc.Streams {
 		id, err := UDPFlowID(row.StreamID, row.Initiator == "server")

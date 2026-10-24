@@ -117,11 +117,12 @@ func (c *Client) openTLS(ctx context.Context, kind wire.FlowKind, target wire.Ta
 		return nil, err
 	}
 	if c.keys != nil {
-		raw, err = morph.WrapTCPClient(raw, *c.keys)
-		if err != nil {
+		wrapped, wrapErr := morph.WrapTCPClient(raw, *c.keys)
+		if wrapErr != nil {
 			_ = raw.Close()
-			return nil, err
+			return nil, wrapErr
 		}
+		raw = wrapped
 	}
 	tlsConn := tls.Client(raw, c.cfg.TLS)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
