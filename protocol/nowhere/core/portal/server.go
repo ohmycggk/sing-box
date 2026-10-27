@@ -136,9 +136,27 @@ func (s *Server) ServeQUIC(ctx context.Context, ln qio.Listener) error {
 }
 
 func (s *Server) serveTCP(ctx context.Context, raw net.Conn) {
+	acceptedAt := time.Now()
+	deadline := acceptedAt.Add(authBudget())
+	morphing := s.keys != nil
+	if morphing {
+		// Abortive close stays on until Vector authentication succeeds.
+		if err := setZeroLinger(raw); err != nil {
+			_ = raw.Close()
+			return
+		}
+	}
 	if !s.admit.take(raw.RemoteAddr()) {
-		_ = raw.Close()
-		return
+		if !morphing {
+			_ = raw.Close()
+			return
+		}
+		// A Morph TCP connection waits for a slot until the handshake deadline
+		// instead of being dropped. The wait does not read the socket.
+		if !s.admit.wait(ctx, raw.RemoteAddr(), deadline) {
+			_ = raw.Close()
+			return
+		}
 	}
 	held := true
 	defer func() {
@@ -146,12 +164,23 @@ func (s *Server) serveTCP(ctx context.Context, raw net.Conn) {
 			s.admit.release(raw.RemoteAddr())
 		}
 	}()
-	if s.keys != nil {
+	if morphing {
 		raw = morph.WrapTCPServer(raw, *s.keys)
 	}
 	tlsConn := tls.Server(raw, s.tls)
-	_ = tlsConn.SetDeadline(time.Now().Add(authBudget()))
+	_ = tlsConn.SetDeadline(deadline)
 	if err := tlsConn.Handshake(); err != nil {
+		// A rejected prelude or ClientHello is not drained: the Morph reader
+		// stops returning socket bytes once admission fails. The slot is released
+		// before the hold, because the connection will not authenticate. The
+		// socket itself stays open until the deadline captured at accept.
+		// crypto/tls does not preserve the admission error, so every Morph
+		// failure before a TLS response takes this path.
+		if morphing {
+			s.admit.release(raw.RemoteAddr())
+			held = false
+			parkUntil(deadline)
+		}
 		_ = tlsConn.Close()
 		return
 	}
@@ -168,6 +197,12 @@ func (s *Server) serveTCP(ctx context.Context, raw net.Conn) {
 	if err != nil || role != wire.RoleVector {
 		_ = tlsConn.Close()
 		return
+	}
+	if morphing {
+		if err := morph.ReleaseAuthenticated(raw, deadline); err != nil {
+			_ = tlsConn.Close()
+			return
+		}
 	}
 	_ = tlsConn.SetDeadline(time.Now().Add(flowSetupLimit))
 	kind, target, ok, err := wire.ReadFlowRequest(br)
@@ -585,15 +620,19 @@ func authBudget() time.Duration {
 }
 
 type admit struct {
-	mu  sync.Mutex
-	n   int
-	per map[string]int
+	mu   sync.Mutex
+	cond *sync.Cond
+	n    int
+	per  map[string]int
 }
 
 func (a *admit) take(addr net.Addr) bool {
-	key := sourceKey(addr)
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.takeLocked(sourceKey(addr))
+}
+
+func (a *admit) takeLocked(key string) bool {
 	if a.n >= maxUnauth || a.per[key] >= maxPerSource {
 		return false
 	}
@@ -602,15 +641,73 @@ func (a *admit) take(addr net.Addr) bool {
 	return true
 }
 
+// wait blocks until a slot is taken, ctx ends, or deadline passes. The
+// capacity check and the wait share one lock, so a release cannot pass
+// unnoticed between them. It is used only for Morph TCP.
+func (a *admit) wait(ctx context.Context, addr net.Addr, deadline time.Time) bool {
+	a.mu.Lock()
+	if a.cond == nil {
+		a.cond = sync.NewCond(&a.mu)
+	}
+	key := sourceKey(addr)
+	timer := time.NewTimer(time.Until(deadline))
+	stop := make(chan struct{})
+	defer func() {
+		timer.Stop()
+		close(stop)
+	}()
+	go func() {
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		case <-stop:
+			return
+		}
+		a.mu.Lock()
+		a.cond.Broadcast()
+		a.mu.Unlock()
+	}()
+	for {
+		if a.takeLocked(key) {
+			a.mu.Unlock()
+			return true
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) {
+			a.mu.Unlock()
+			return false
+		}
+		a.cond.Wait()
+	}
+}
+
 func (a *admit) release(addr net.Addr) {
 	key := sourceKey(addr)
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.n > 0 {
 		a.n--
 	}
 	if a.per[key] > 0 {
 		a.per[key]--
+	}
+	if a.cond != nil {
+		a.cond.Broadcast()
+	}
+	a.mu.Unlock()
+}
+
+func setZeroLinger(conn net.Conn) error {
+	type linger interface {
+		SetLinger(int) error
+	}
+	if conn, ok := conn.(linger); ok {
+		return conn.SetLinger(0)
+	}
+	return nil
+}
+
+func parkUntil(deadline time.Time) {
+	if wait := time.Until(deadline); wait > 0 {
+		time.Sleep(wait)
 	}
 }
 

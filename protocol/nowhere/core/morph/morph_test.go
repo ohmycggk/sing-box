@@ -3,12 +3,14 @@ package morph
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
 	"net"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestDeriveMatchesRustVector(t *testing.T) {
@@ -206,6 +208,123 @@ func TestServerAcceptsEveryPreludePolicy(t *testing.T) {
 	}
 }
 
+func TestServerDropsUnsupportedQUICVersions(t *testing.T) {
+	if supportedQUICPacket(nil) || supportedQUICPacket([]byte{}) {
+		t.Fatal("empty packet accepted")
+	}
+	for first := byte(0); first < 0x80; first += 17 {
+		if !supportedQUICPacket([]byte{first}) {
+			t.Fatalf("short header %#x rejected", first)
+		}
+	}
+	for _, first := range []byte{0x80, 0xc0, 0xf0, 0xff} {
+		for _, version := range quinnVersions {
+			packet := append([]byte{first}, binary.BigEndian.AppendUint32(nil, version)...)
+			if !supportedQUICPacket(packet) {
+				t.Fatalf("version %#x rejected", version)
+			}
+			for n := 1; n < 5; n++ {
+				if supportedQUICPacket(packet[:n]) {
+					t.Fatalf("truncated long header of %d bytes accepted", n)
+				}
+			}
+		}
+		for _, version := range []uint32{0, 2, 0x0a1a2a3a, 0xffffffff, 0x6b3343cf} {
+			packet := []byte{first, 0, 0, 0, 0}
+			binary.BigEndian.PutUint32(packet[1:], version)
+			if supportedQUICPacket(packet) {
+				t.Fatalf("version %#x accepted", version)
+			}
+		}
+	}
+}
+
+func TestServerReadFromSkipsUnsupportedThenReturnsNext(t *testing.T) {
+	keys := Derive([]byte("0123456789abcdef0123456789abcdef"))
+	rawClient, rawServer := packetPipe()
+	defer rawClient.Close()
+	defer rawServer.Close()
+	server := WrapPacketConn(rawServer, keys, false)
+	client := WrapPacketConn(rawClient, keys, true)
+
+	rejected := []byte{0xc0, 0xff, 0xff, 0xff, 0xff, 1, 2, 3}
+	accepted := []byte{0x40, 7, 8, 9}
+	errCh := make(chan error, 1)
+	go func() {
+		if _, err := client.WriteTo(rejected, nil); err != nil {
+			errCh <- err
+			return
+		}
+		if _, err := client.WriteTo(accepted, nil); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+	buf := make([]byte, 32)
+	_ = server.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, _, err := server.ReadFrom(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(buf[:n], accepted) {
+		t.Fatalf("got %x, want the short-header datagram", buf[:n])
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type packetPipeConn struct {
+	reader *io.PipeReader
+	writer *io.PipeWriter
+	peer   *packetPipeConn
+}
+
+func packetPipe() (*packetPipeConn, *packetPipeConn) {
+	leftRead, rightWrite := io.Pipe()
+	rightRead, leftWrite := io.Pipe()
+	left := &packetPipeConn{reader: leftRead, writer: leftWrite}
+	right := &packetPipeConn{reader: rightRead, writer: rightWrite}
+	left.peer = right
+	right.peer = left
+	return left, right
+}
+
+func (c *packetPipeConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	var n uint16
+	if err := binary.Read(c.reader, binary.BigEndian, &n); err != nil {
+		return 0, nil, err
+	}
+	if int(n) > len(p) {
+		return 0, nil, io.ErrShortBuffer
+	}
+	_, err := io.ReadFull(c.reader, p[:n])
+	return int(n), nil, err
+}
+
+func (c *packetPipeConn) WriteTo(p []byte, _ net.Addr) (int, error) {
+	if len(p) > 65535 {
+		return 0, io.ErrShortWrite
+	}
+	var head [2]byte
+	binary.BigEndian.PutUint16(head[:], uint16(len(p)))
+	if _, err := c.writer.Write(head[:]); err != nil {
+		return 0, err
+	}
+	return c.writer.Write(p)
+}
+
+func (c *packetPipeConn) Close() error {
+	_ = c.reader.Close()
+	return c.writer.Close()
+}
+
+func (c *packetPipeConn) LocalAddr() net.Addr              { return nil }
+func (c *packetPipeConn) SetDeadline(time.Time) error      { return nil }
+func (c *packetPipeConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *packetPipeConn) SetWriteDeadline(time.Time) error { return nil }
+
 func TestFadePropagatesRandomSourceErrors(t *testing.T) {
 	want := errors.New("entropy")
 	// Call 1 fills the prelude. Call 2 draws the two boundaries. The first
@@ -230,6 +349,10 @@ func TestFadePropagatesRandomSourceErrors(t *testing.T) {
 }
 
 func wrapTCPClientPolicy(conn net.Conn, keys Keys, policy preludePolicy) (net.Conn, error) {
+	identity, counter, err := keys.state.allocate()
+	if err != nil {
+		return nil, err
+	}
 	prelude, err := generatePrelude(policy)
 	if err != nil {
 		return nil, err
@@ -238,6 +361,7 @@ func wrapTCPClientPolicy(conn net.Conn, keys Keys, policy preludePolicy) (net.Co
 	if _, err := io.ReadFull(rand.Reader, nonce[:]); err != nil {
 		return nil, err
 	}
+	encodePrelude(keys.state, &prelude, &nonce, identity, counter)
 	pref := make([]byte, 0, preludeLen+nonceLen)
 	pref = append(pref, prelude[:]...)
 	pref = append(pref, nonce[:]...)

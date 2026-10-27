@@ -18,8 +18,8 @@ import (
 // files below define every byte on the wire (frame and header layout, auth,
 // morph transform) and nothing else, so the hash changes exactly when the wire
 // contract does. nw3 has no Mux, so its coverage set is the same minus
-// src/mux/wire.rs. Nowhere 3.1 also pins the authenticated-prelude admission
-// sources src/portal/replay.rs and src/portal/prehello.rs; the prelude codec
+// src/mux/wire.rs. Nowhere 3.1 and later also pin the authenticated-prelude
+// admission sources src/portal/replay.rs and src/portal/prehello.rs; the prelude codec
 // itself is already covered under src/transport/morph/. See ProtocolHashNW3.
 func protocolFiles(upstream string, nw3 bool) ([]string, error) {
 	var names []string

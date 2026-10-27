@@ -41,7 +41,7 @@ func TestDefaultLockIsNowhere3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lock.Version != "3.1.0" || lock.Commit != "000006531ca60321a02b50d270ab2e22f37701e3" {
+	if lock.Version != "3.2.0" || lock.Commit != "00000e23a0a131dd04fd7aec340b8d523a13ae51" {
 		t.Fatalf("UPSTREAM.lock = %s %s", lock.Version, lock.Commit)
 	}
 	// Both locks define vector_tree_sha256 the same way: sha256-tree-v1 over

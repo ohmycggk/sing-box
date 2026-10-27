@@ -44,15 +44,15 @@ func (c *tcpConn) readClientHello() ([]byte, error) {
 		}
 		header := buf[consumed : consumed+tlsRecordHeader]
 		if records == 0 && (header[0] == 0x80 || header[0] != tlsHandshake || binary.BigEndian.Uint16(header[1:3]) >= 0x1000) {
-			return nil, errClientHello
+			return nil, ErrClientHello
 		}
 		recordLen := int(binary.BigEndian.Uint16(header[3:5]))
 		if header[0] != tlsHandshake || recordLen > tlsMaxCipher {
-			return nil, errClientHello
+			return nil, ErrClientHello
 		}
 		total := consumed + tlsRecordHeader + recordLen
 		if total > tlsMaxHandshake+tlsMaxRecords*tlsRecordHeader {
-			return nil, errClientHello
+			return nil, ErrClientHello
 		}
 		buf, err = c.readPlainUntil(buf, total)
 		if err != nil {
@@ -62,21 +62,21 @@ func (c *tcpConn) readClientHello() ([]byte, error) {
 		consumed = total
 		if len(handshake) >= 4 && messageLen < 0 {
 			if handshake[0] != tlsClientHello {
-				return nil, errClientHello
+				return nil, ErrClientHello
 			}
 			messageLen = int(handshake[1])<<16 | int(handshake[2])<<8 | int(handshake[3])
 			if messageLen > tlsMaxHandshake {
-				return nil, errClientHello
+				return nil, ErrClientHello
 			}
 		}
 		if messageLen >= 0 && len(handshake) >= 4+messageLen {
 			if !clientHelloWellFormed(handshake[:4+messageLen]) {
-				return nil, errClientHello
+				return nil, ErrClientHello
 			}
 			return buf, nil
 		}
 	}
-	return nil, errClientHello
+	return nil, ErrClientHello
 }
 
 func (c *tcpConn) readPlainUntil(buf []byte, n int) ([]byte, error) {
@@ -87,7 +87,7 @@ func (c *tcpConn) readPlainUntil(buf []byte, n int) ([]byte, error) {
 		next := make([]byte, n-len(buf))
 		if _, err := io.ReadFull(c.Conn, next); err != nil {
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
-				return nil, errClientHello
+				return nil, ErrClientHello
 			}
 			return nil, err
 		}

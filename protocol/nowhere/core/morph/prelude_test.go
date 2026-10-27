@@ -322,8 +322,8 @@ func TestPortalPreludeAdmission(t *testing.T) {
 	}
 
 	legacyKeys := Derive([]byte("ffeeddccbbaa99887766554433221100"))
-	if !acceptOnce(t, legacyKeys, legacyPrelude(t, legacyKeys, hello), hello) {
-		t.Fatal("3.0 prelude rejected")
+	if acceptBlocking(t, legacyKeys, legacyPrelude(t, legacyKeys, hello)) {
+		t.Fatal("3.0 prelude accepted")
 	}
 	if legacyKeys.state.replay != nil {
 		t.Fatal("tag mismatch touched the registry")
@@ -366,7 +366,7 @@ func TestDuplicateCounterIsSilent(t *testing.T) {
 		select {
 		case err := <-errCh:
 			if err != nil {
-				if !errors.Is(err, errPreludeRejected) {
+				if !errors.Is(err, ErrPreludeRejected) {
 					t.Fatal(err)
 				}
 				rejected++
@@ -411,6 +411,80 @@ func TestMalformedHelloWritesNoTLSAlert(t *testing.T) {
 	}
 	if keys.state.replay != nil && keys.state.replay.count != 0 {
 		t.Fatal("rejected hello committed replay state")
+	}
+}
+
+func TestRejectedPreludeDoesNotReadClientHello(t *testing.T) {
+	keys := Derive([]byte("0123456789abcdef0123456789abcdef"))
+	hello := minimalClientHello()
+	clientSide, serverSide := net.Pipe()
+	defer clientSide.Close()
+	defer serverSide.Close()
+	wire := legacyPrelude(t, keys, hello)
+	var read atomic.Int64
+	limited := &budgetConn{Conn: serverSide, left: &read, budget: int64(preludeLen + nonceLen)}
+	errCh := make(chan error, 1)
+	go func() {
+		server := WrapTCPServer(limited, keys)
+		_, err := server.Read(make([]byte, 8))
+		errCh <- err
+	}()
+	go func() { _, _ = clientSide.Write(wire) }()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, ErrPreludeRejected) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("rejected prelude did not return")
+	}
+	if read.Load() != int64(preludeLen+nonceLen) {
+		t.Fatalf("server read %d bytes, want %d", read.Load(), preludeLen+nonceLen)
+	}
+	if keys.state.replay != nil {
+		t.Fatal("rejected prelude created the registry")
+	}
+}
+
+// budgetConn fails the read that would pass budget. It proves a rejected
+// prelude stops before the following ClientHello.
+type budgetConn struct {
+	net.Conn
+	left   *atomic.Int64
+	budget int64
+}
+
+func (c *budgetConn) Read(p []byte) (int, error) {
+	used := c.left.Load()
+	if used >= c.budget {
+		return 0, errors.New("read past prelude")
+	}
+	if int64(len(p)) > c.budget-used {
+		p = p[:c.budget-used]
+	}
+	n, err := c.Conn.Read(p)
+	c.left.Add(int64(n))
+	return n, err
+}
+
+func TestReleaseAuthenticatedRestoresLingerOnlyBeforeDeadline(t *testing.T) {
+	keys := Derive([]byte("0123456789abcdef0123456789abcdef"))
+	clientSide, serverSide := net.Pipe()
+	defer clientSide.Close()
+	defer serverSide.Close()
+	server := WrapTCPServer(serverSide, keys)
+	if err := ReleaseAuthenticated(server, time.Now().Add(-time.Second)); !errors.Is(err, ErrHandshakeDeadline) {
+		t.Fatalf("expired deadline: %v", err)
+	}
+	if err := ReleaseAuthenticated(clientSide, time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	client, err := WrapTCPClient(clientSide, keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ReleaseAuthenticated(client, time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
 	}
 }
 

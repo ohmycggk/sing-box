@@ -21,9 +21,17 @@ const (
 var (
 	errIdentityRandom   = errors.New("nw3: morph tcp identity randomness unavailable")
 	errCounterExhausted = errors.New("nw3: morph tcp prelude counter exhausted")
-	errPreludeRejected  = errors.New("nw3: morph tcp prelude rejected")
-	errClientHello      = errors.New("nw3: morph tcp client hello rejected")
-	errPreludeState     = errors.New("nw3: morph tcp client state missing")
+	// ErrPreludeRejected is an unauthenticated, invalid, or replayed Morph TCP
+	// prelude. The Portal must not read any further input after it.
+	ErrPreludeRejected = errors.New("nw3: morph tcp prelude rejected")
+	// ErrClientHello is a structurally rejected Morph TCP ClientHello. It is
+	// returned before any byte reaches crypto/tls, so the Portal writes no alert.
+	ErrClientHello = errors.New("nw3: morph tcp client hello rejected")
+	// ErrHandshakeDeadline means Vector authentication finished after the
+	// deadline captured when the Morph TCP connection was accepted. Linger
+	// stays zero.
+	ErrHandshakeDeadline = errors.New("nw3: morph tcp authentication deadline expired")
+	errPreludeState      = errors.New("nw3: morph tcp client state missing")
 
 	entropyMu sync.Mutex
 	entropy   io.Reader = rand.Reader
